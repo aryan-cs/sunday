@@ -78,9 +78,11 @@ async def process_single_email(
         else:
             event = parsed["event"]
             if not event.get("is_online") and event.get("location"):
+                resolved_location = await travel.resolve_destination(event["location"])
+                event["location"] = resolved_location["display_location"]
                 departure = f"{event['date']}T{event['start_time']}:00"
                 travel_info = await travel.estimate(
-                    destination=event["location"],
+                    destination=resolved_location["routing_destination"],
                     departure_time=departure,
                 )
                 log.info("  → Travel: %d min", travel_info["travel_minutes"])

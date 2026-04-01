@@ -28,6 +28,19 @@ class _FakeCalendar:
 
 
 class _FakeTravel:
+    async def resolve_destination(self, destination):
+        if destination == "Illini Union":
+            return {
+                "formatted_address": "1401 W Green St, Urbana, IL 61801",
+                "display_location": "Illini Union (1401 W Green St, Urbana, IL 61801)",
+                "routing_destination": "1401 W Green St, Urbana, IL 61801",
+            }
+        return {
+            "formatted_address": destination,
+            "display_location": destination,
+            "routing_destination": destination,
+        }
+
     async def estimate(self, destination, departure_time=None, origin=None):
         del destination, departure_time, origin
         return {"travel_minutes": 25, "departure_time": "1:20 PM"}
@@ -155,3 +168,4 @@ async def test_process_single_email_enriches_missing_title_and_end_time(monkeypa
     assert result["calendar_status"] == "created"
     assert calendar.last_event["title"] == "Lunch with Aryan Gupta"
     assert calendar.last_event["end_time"] == "16:00"
+    assert calendar.last_event["location"] == "Illini Union (1401 W Green St, Urbana, IL 61801)"

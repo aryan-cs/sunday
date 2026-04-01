@@ -148,6 +148,7 @@ def format_summary(
     source_email_link: str | None = None,
 ) -> str:
     """Format a parsed email dict into a human-readable message."""
+    del source_email_link
     notes = processing_notes or []
     summary = _trim_sentence(parsed_email.get("summary", "new email")) or "new email"
     event = parsed_email.get("event") or {}
@@ -190,9 +191,6 @@ def format_summary(
     for note in notes:
         lines.append(f"note: {note}")
 
-    if source_email_link:
-        lines.append(f"original email: {source_email_link}")
-
     return "\n".join(lines)
 
 
@@ -224,17 +222,26 @@ async def send_summary(
     sent_any = False
     errors: list[str] = []
 
+    async def _send_main_and_link(sender) -> bool:
+        delivered = await sender.send(message)
+        if delivered and source_email_link:
+            try:
+                await sender.send(source_email_link)
+            except MessagingDeliveryError as exc:
+                log.warning("Follow-up email link delivery failed: %s", exc)
+        return delivered
+
     if Config.telegram_token and Config.telegram_chat_id:
         configured_channels += 1
         try:
-            sent_any |= await telegram.send(message)
+            sent_any |= await _send_main_and_link(telegram)
         except MessagingDeliveryError as exc:
             errors.append(str(exc))
 
     if Config.imessage_enabled:
         configured_channels += 1
         try:
-            sent_any |= await imessage.send(message)
+            sent_any |= await _send_main_and_link(imessage)
         except MessagingDeliveryError as exc:
             errors.append(str(exc))
 

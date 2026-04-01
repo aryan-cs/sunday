@@ -120,10 +120,12 @@ That filename must match `GOOGLE_CREDENTIALS_FILE` in `config.env`.
 Still in Google Cloud:
 
 1. Create an API key.
-2. Make sure the key can access Distance Matrix API.
+2. Make sure the key can access:
+   - Distance Matrix API
+   - Geocoding API
 3. Put it into `GOOGLE_MAPS_API_KEY` in `config.env`.
 
-Without this key, in-person travel reminders will fail instead of guessing fake travel times.
+Without this key, in-person travel reminders and exact address lookups will fail instead of guessing fake travel times or addresses.
 
 ## LLM Setup
 

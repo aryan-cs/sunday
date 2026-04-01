@@ -4,6 +4,7 @@ travel_estimator.py — Travel time estimation via Google Maps Distance Matrix A
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 import httpx
@@ -28,6 +29,81 @@ class TravelEstimator:
     """
 
     BASE_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
+    GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+    @staticmethod
+    def _clean_formatted_address(address: str) -> str:
+        """Normalise Google's formatted addresses for friendlier user output."""
+        return re.sub(r",\s*USA$", "", address.strip())
+
+    @classmethod
+    def _addresses_equivalent(cls, left: str, right: str) -> bool:
+        """Return true when two location strings are effectively the same."""
+        normalize = lambda value: re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+        return normalize(left) == normalize(right)
+
+    async def resolve_destination(self, destination: str) -> dict:
+        """
+        Resolve a human place name to a friendlier display string and exact address.
+
+        Returns:
+            {
+                "query": original input,
+                "formatted_address": exact address or None,
+                "display_location": string suitable for Calendar/texts,
+                "routing_destination": best destination for Maps routing,
+            }
+        }
+        """
+        if not Config.google_maps_key:
+            raise ConfigurationError(
+                "GOOGLE_MAPS_API_KEY is required for travel-aware reminders."
+            )
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    self.GEOCODE_URL,
+                    params={"address": destination, "key": Config.google_maps_key},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise TravelEstimationError("Google Maps geocoding request failed.") from exc
+
+        status = data.get("status")
+        if status == "ZERO_RESULTS":
+            return {
+                "query": destination,
+                "formatted_address": None,
+                "display_location": destination,
+                "routing_destination": destination,
+            }
+        if status != "OK":
+            raise TravelEstimationError(
+                f"Google Maps could not resolve destination {destination!r}: {status}."
+            )
+
+        try:
+            first_result = data["results"][0]
+            formatted_address = self._clean_formatted_address(first_result["formatted_address"])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise TravelEstimationError(
+                "Google Maps geocoding returned an unexpected response shape."
+            ) from exc
+
+        display_location = destination
+        if formatted_address and not self._addresses_equivalent(destination, formatted_address):
+            display_location = f"{destination} ({formatted_address})"
+        elif formatted_address:
+            display_location = formatted_address
+
+        return {
+            "query": destination,
+            "formatted_address": formatted_address,
+            "display_location": display_location,
+            "routing_destination": formatted_address or destination,
+        }
 
     async def estimate(
         self,

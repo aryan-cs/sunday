@@ -1,0 +1,65 @@
+# ─── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ─── Virtual environments ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Config & secrets (NEVER commit these) ────────────────────
+config.env
+.env
+.env.*
+!.env.example
+!config.env.example
+
+# Google OAuth & service account files
+credentials.json
+token.json
+token_*.json
+service_account*.json
+oauth2.keys.json
+gmail_token.json
+calendar_token.json
+*_credentials.json
+
+# API keys / secrets in any form
+*.pem
+*.key
+secrets/
+
+# ─── Logs ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Testing & coverage ───────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ─── FastAPI / server ─────────────────────────────────────────
+.uvicorn*
+
+# ─── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── macOS ────────────────────────────────────────────────────
+.DS_Store
+
+# ─── Distribution ─────────────────────────────────────────────
+*.tar.gz
+*.zip

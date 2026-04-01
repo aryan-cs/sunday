@@ -18,6 +18,8 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
     datefmt="%H:%M:%S",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("smart-calendar")
 
 
@@ -42,12 +44,19 @@ async def main() -> None:
         Config.llm_providers[Config.active_llm]["model"],
     )
     log.info("Poll interval: %ds", Config.poll_interval)
+    log.info("Max emails per cycle: %d", Config.max_emails_per_cycle)
 
     while True:
         try:
             results = await run_pipeline()
             if results:
-                log.info("Processed %d email(s) this cycle", len(results))
+                failures = sum(1 for result in results if "error" in result)
+                log.info(
+                    "Handled %d email(s) this cycle (%d succeeded, %d failed)",
+                    len(results),
+                    len(results) - failures,
+                    failures,
+                )
         except Exception as exc:
             log.error("Unexpected error in main loop: %s", exc, exc_info=True)
 

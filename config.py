@@ -27,6 +27,12 @@ def _get_csv(name: str, default: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _get_optional_int(name: str) -> int | None:
+    """Return an int env var, or None when unset."""
+    value = os.getenv(name, "").strip()
+    return int(value) if value else None
+
+
 class Config:
     """Single source of truth for all configuration."""
 
@@ -103,9 +109,13 @@ class Config:
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
     poll_interval: int = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
+    max_emails_per_cycle: int = int(os.getenv("MAX_EMAILS_PER_CYCLE", "3"))
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     openrouter_site_url: str = os.getenv("OPENROUTER_SITE_URL", "")
     openrouter_app_name: str = os.getenv("OPENROUTER_APP_NAME", "Smart Calendar")
+    llm_requests_per_minute: int | None = _get_optional_int("LLM_REQUESTS_PER_MINUTE")
+    llm_retry_attempts: int = int(os.getenv("LLM_RETRY_ATTEMPTS", "4"))
+    llm_retry_base_seconds: float = float(os.getenv("LLM_RETRY_BASE_SECONDS", "5"))
 
     @classmethod
     def get_active_llm(cls) -> dict:
@@ -161,6 +171,14 @@ class Config:
             errors.append(
                 "DEFAULT_TRAVEL_MODE must be one of: driving, walking, bicycling, transit."
             )
+        if cls.max_emails_per_cycle < 1:
+            errors.append("MAX_EMAILS_PER_CYCLE must be at least 1.")
+        if cls.llm_retry_attempts < 1:
+            errors.append("LLM_RETRY_ATTEMPTS must be at least 1.")
+        if cls.llm_retry_base_seconds <= 0:
+            errors.append("LLM_RETRY_BASE_SECONDS must be greater than 0.")
+        if cls.llm_requests_per_minute is not None and cls.llm_requests_per_minute < 1:
+            errors.append("LLM_REQUESTS_PER_MINUTE must be at least 1 when set.")
 
         if cls.telegram_token and not cls.telegram_chat_id:
             errors.append("TELEGRAM_CHAT_ID is required when TELEGRAM_BOT_TOKEN is set.")

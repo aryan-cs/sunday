@@ -23,6 +23,8 @@ from location_state import get_current_location, update_location
 from pipeline import run_pipeline
 
 log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 @asynccontextmanager

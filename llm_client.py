@@ -8,8 +8,11 @@ OpenAI-compatible endpoint.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -24,8 +27,8 @@ class LLMClient:
     Unified async LLM client.
 
     Usage:
-        from llm_client import llm
-        response = await llm.complete([
+        from llm_client import get_llm
+        response = await get_llm().complete([
             {"role": "system", "content": "You are helpful."},
             {"role": "user",   "content": "Hello!"},
         ])
@@ -35,6 +38,9 @@ class LLMClient:
         self.config = Config.get_active_llm()
         self.provider = self.config["provider_name"]
         self._validate_provider_config()
+        self._request_lock = asyncio.Lock()
+        self._next_request_at = 0.0
+        self._requests_per_minute = self._resolve_requests_per_minute()
         log.info(
             "LLMClient initialised — provider: %s, model: %s",
             self.provider,
@@ -49,14 +55,6 @@ class LLMClient:
     ) -> str:
         """
         Send messages to the active LLM and return the response text.
-
-        Args:
-            messages:    List of {"role": "system"|"user"|"assistant", "content": "..."}
-            temperature: Override default temperature from config.
-            max_tokens:  Override default max_tokens from config.
-
-        Returns:
-            The assistant's response as a plain string.
         """
         temp = temperature if temperature is not None else Config.temperature
         tokens = max_tokens if max_tokens is not None else Config.max_tokens
@@ -83,6 +81,100 @@ class LLMClient:
             raise ConfigurationError(
                 f"LLM provider '{self.provider}' requires a base URL."
             )
+
+    def _resolve_requests_per_minute(self) -> int:
+        """Return the configured or provider-specific default RPM."""
+        if Config.llm_requests_per_minute is not None:
+            return Config.llm_requests_per_minute
+        if self.provider == "gemini":
+            return 12
+        if self.provider == "groq":
+            return 20
+        return 60
+
+    async def _throttle(self) -> None:
+        """Space requests to avoid stampeding provider rate limits."""
+        min_interval = 60.0 / self._requests_per_minute
+        async with self._request_lock:
+            now = time.monotonic()
+            wait_for = max(0.0, self._next_request_at - now)
+            if wait_for > 0:
+                log.info(
+                    "LLM throttle active for provider %s; waiting %.1fs before the next request.",
+                    self.provider,
+                    wait_for,
+                )
+                await asyncio.sleep(wait_for)
+                now = time.monotonic()
+            self._next_request_at = now + min_interval
+
+    async def _sleep_after_rate_limit(self, response: httpx.Response, attempt: int) -> None:
+        """Sleep according to Retry-After or exponential backoff after a 429."""
+        retry_after = response.headers.get("retry-after", "").strip()
+        wait_seconds = 0.0
+
+        if retry_after:
+            if retry_after.isdigit():
+                wait_seconds = float(retry_after)
+            else:
+                try:
+                    retry_dt = parsedate_to_datetime(retry_after)
+                    wait_seconds = max(
+                        0.0,
+                        retry_dt.timestamp() - time.time(),
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    wait_seconds = 0.0
+
+        if wait_seconds <= 0:
+            wait_seconds = Config.llm_retry_base_seconds * attempt
+
+        async with self._request_lock:
+            self._next_request_at = max(self._next_request_at, time.monotonic() + wait_seconds)
+
+        log.warning(
+            "LLM provider %s rate limited request (attempt %d/%d). Retrying in %.1fs.",
+            self.provider,
+            attempt,
+            Config.llm_retry_attempts,
+            wait_seconds,
+        )
+        await asyncio.sleep(wait_seconds)
+
+    async def _post_with_retries(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json_body: dict,
+    ) -> dict:
+        """POST with provider-aware throttling and retries for 429s."""
+        for attempt in range(1, Config.llm_retry_attempts + 1):
+            await self._throttle()
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(url, headers=headers, json=json_body)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status == 429 and attempt < Config.llm_retry_attempts:
+                    await self._sleep_after_rate_limit(exc.response, attempt)
+                    continue
+                if status == 429:
+                    raise SmartCalendarError(
+                        f"{self.provider} is rate limiting requests right now. "
+                        "Wait a bit, reduce startup backlog, or switch providers."
+                    ) from exc
+                raise SmartCalendarError(
+                    f"{self.provider} request failed with HTTP {status}."
+                ) from exc
+            except (httpx.HTTPError, ValueError) as exc:
+                raise SmartCalendarError(
+                    f"{self.provider} request failed while generating a completion."
+                ) from exc
+
+        raise SmartCalendarError(f"{self.provider} request retry loop exited unexpectedly.")
 
     async def _openai_compatible(
         self,
@@ -113,18 +205,11 @@ class LLMClient:
         if self.provider == "ollama" and "/v1" not in base:
             base += "/v1"
 
-        url = f"{base}/chat/completions"
-        log.debug("POST %s  model=%s", url, self.config["model"])
-
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(url, headers=headers, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise SmartCalendarError(
-                f"{self.provider} request failed while generating a completion."
-            ) from exc
+        data = await self._post_with_retries(
+            f"{base}/chat/completions",
+            headers=headers,
+            json_body=body,
+        )
 
         try:
             content = data["choices"][0]["message"]["content"]
@@ -165,19 +250,13 @@ class LLMClient:
                 "parts": [{"text": "\n".join(system_parts)}]
             }
 
-        url = (
-            f"{self.config['base_url']}/models/{self.config['model']}"
-            f":generateContent?key={self.config['api_key']}"
+        data = await self._post_with_retries(
+            (
+                f"{self.config['base_url']}/models/{self.config['model']}"
+                f":generateContent?key={self.config['api_key']}"
+            ),
+            json_body=body,
         )
-        log.debug("POST %s", url.split("?")[0])
-
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(url, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise SmartCalendarError("Gemini request failed while generating a completion.") from exc
 
         try:
             content = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -214,15 +293,7 @@ class LLMClient:
             },
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(url, headers=headers, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise SmartCalendarError(
-                "HuggingFace request failed while generating a completion."
-            ) from exc
+        data = await self._post_with_retries(url, headers=headers, json_body=body)
 
         if isinstance(data, list):
             content = data[0].get("generated_text", "")
@@ -266,18 +337,6 @@ async def parse_with_json(
 
     Works across all providers by using aggressive prompting and
     stripping markdown fences if the model wraps the output.
-
-    Args:
-        prompt:      User-turn prompt.
-        system:      System prompt (instruct the model to reply with JSON only).
-        client:      LLMClient instance; uses the global `llm` singleton if None.
-        temperature: Low temperature → more deterministic JSON output.
-
-    Returns:
-        Parsed Python dict.
-
-    Raises:
-        json.JSONDecodeError: If the response still isn't valid JSON.
     """
     _client = client or get_llm()
     messages = [

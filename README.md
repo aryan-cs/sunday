@@ -9,6 +9,10 @@ This project:
 - computes travel-aware reminders with Google Maps
 - sends summaries through Telegram or iMessage
 
+Important behavior:
+- the app ignores unread emails that were already sitting in the inbox when it starts
+- it only processes emails that arrive after the watcher is already running
+
 The production path is strict by design. If parsing, messaging, or travel estimation fails, the app fails visibly instead of inventing fallback data.
 
 ## What You Need
@@ -79,6 +83,13 @@ Minimum working local setup:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `MY_DEFAULT_LOCATION`
+
+Recommended local defaults for Gemini or another free-tier provider:
+- `MAX_EMAILS_PER_CYCLE=3`
+- `LLM_RETRY_ATTEMPTS=4`
+- `LLM_RETRY_BASE_SECONDS=5`
+
+Those settings help avoid blowing through rate limits on first startup when you already have unread mail in your inbox.
 
 If you use iMessage instead of Telegram:
 - set `IMESSAGE_ENABLED=true`
@@ -236,6 +247,8 @@ Expected flow:
 4. Telegram or iMessage summary is delivered
 5. the Gmail message is marked processed only after delivery succeeds
 
+If you start the app with 500 unread emails already in your inbox, it will not try to process that whole backlog.
+
 ## Useful Commands
 
 Run the local polling worker:
@@ -243,6 +256,11 @@ Run the local polling worker:
 ```bash
 uv run python main.py
 ```
+
+If you hit LLM `429 Too Many Requests` errors:
+- wait a minute and rerun
+- keep `MAX_EMAILS_PER_CYCLE` low, such as `1` to `3`
+- or switch to another provider in `config.env`
 
 Run the API server:
 

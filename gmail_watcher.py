@@ -65,10 +65,9 @@ class GmailWatcher:
     """
     Polls Gmail for unread messages on the configured labels.
 
-    Successfully processed message IDs are persisted locally so the app
-    does not re-handle the same email after a restart on self-hosted
-    deployments. Gmail's unread state remains the primary source of
-    truth, which keeps the pipeline compatible with stateless cron jobs.
+    Any messages that are already unread when the watcher starts are
+    treated as backlog and ignored. Only emails that arrive after the
+    process starts are eligible for processing.
     """
 
     def __init__(self) -> None:
@@ -77,6 +76,43 @@ class GmailWatcher:
         self.service = get_google_service("gmail", "v1")
         self._seen_ids: set[str] = set()
         self._processed_ids: set[str] = _load_processed_ids()
+        self._startup_unread_ids = self._list_unread_message_ids()
+        if self._startup_unread_ids:
+            log.info(
+                "Ignoring %d unread email(s) that were already in the inbox at startup.",
+                len(self._startup_unread_ids),
+            )
+
+    def _list_unread_message_ids(self, max_results: int | None = None) -> list[str]:
+        """Return unread Gmail message IDs, newest first."""
+        page_token: str | None = None
+        unread_ids: list[str] = []
+
+        while True:
+            request = (
+                self.service.users()
+                .messages()
+                .list(
+                    userId="me",
+                    labelIds=Config.gmail_labels,
+                    q="is:unread",
+                    maxResults=max_results or 100,
+                    pageToken=page_token,
+                )
+            )
+            results = request.execute()
+            unread_ids.extend(
+                message["id"]
+                for message in results.get("messages", [])
+                if "id" in message
+            )
+
+            if max_results is not None and len(unread_ids) >= max_results:
+                return unread_ids[:max_results]
+
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                return unread_ids
 
     def get_new_emails(self, max_results: int = 10) -> list[dict]:
         """
@@ -86,26 +122,18 @@ class GmailWatcher:
             RuntimeError: If Gmail cannot be queried.
         """
         try:
-            results = (
-                self.service.users()
-                .messages()
-                .list(
-                    userId="me",
-                    labelIds=Config.gmail_labels,
-                    q="is:unread",
-                    maxResults=max_results,
-                )
-                .execute()
-            )
+            message_ids = self._list_unread_message_ids(max_results=max_results)
         except Exception as exc:
             raise RuntimeError("Gmail list failed.") from exc
 
-        messages = results.get("messages", [])
         new_emails: list[dict] = []
 
-        for msg_meta in messages:
-            msg_id = msg_meta["id"]
-            if msg_id in self._seen_ids or msg_id in self._processed_ids:
+        for msg_id in message_ids:
+            if (
+                msg_id in self._startup_unread_ids
+                or msg_id in self._seen_ids
+                or msg_id in self._processed_ids
+            ):
                 continue
 
             self._seen_ids.add(msg_id)

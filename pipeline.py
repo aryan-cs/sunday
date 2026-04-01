@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 from calendar_manager import CalendarManager
+from config import Config
 from email_parser import get_calendar_readiness_issues, parse_email, summarise_parsed
 from gmail_watcher import GmailWatcher
 from messenger import send_summary
@@ -102,13 +103,14 @@ async def process_single_email(
     }
 
 
-async def run_pipeline(max_emails: int = 10) -> list[dict]:
+async def run_pipeline(max_emails: int | None = None) -> list[dict]:
     """
     Fetch new emails and run the full pipeline on each one.
     """
     gmail, calendar, travel = _get_singletons()
+    email_limit = max_emails if max_emails is not None else Config.max_emails_per_cycle
 
-    new_emails = gmail.get_new_emails(max_results=max_emails)
+    new_emails = gmail.get_new_emails(max_results=email_limit)
     if not new_emails:
         log.debug("No new emails this cycle")
         return []

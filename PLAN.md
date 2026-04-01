@@ -152,9 +152,9 @@ IMESSAGE_RECIPIENT=+1234567890
 # ─── YOUR PREFERENCES ────────────────────────────────────────
 
 # Your default/home location (used for travel time calculations)
-MY_DEFAULT_LOCATION=Champaign, IL
-MY_DEFAULT_LATITUDE=40.1164
-MY_DEFAULT_LONGITUDE=-88.2434
+DEFAULT_HOME_LOCATION=Champaign, IL
+DEFAULT_HOME_LATITUDE=40.1164
+DEFAULT_HOME_LONGITUDE=-88.2434
 
 # How many minutes of "get ready" buffer before any meeting
 PREP_TIME_MINUTES=15
@@ -250,9 +250,9 @@ class Config:
     imessage_recipient = os.getenv("IMESSAGE_RECIPIENT", "")
 
     # ── Preferences ──
-    default_location = os.getenv("MY_DEFAULT_LOCATION", "")
-    default_lat = float(os.getenv("MY_DEFAULT_LATITUDE", "0"))
-    default_lng = float(os.getenv("MY_DEFAULT_LONGITUDE", "0"))
+    default_home_location = os.getenv("DEFAULT_HOME_LOCATION", "")
+    default_home_lat = float(os.getenv("DEFAULT_HOME_LATITUDE", "0"))
+    default_home_lng = float(os.getenv("DEFAULT_HOME_LONGITUDE", "0"))
     prep_time = int(os.getenv("PREP_TIME_MINUTES", "15"))
     online_prep = int(os.getenv("ONLINE_PREP_MINUTES", "5"))
     travel_mode = os.getenv("DEFAULT_TRAVEL_MODE", "driving")
@@ -951,7 +951,7 @@ class TravelEstimator:
         if not Config.google_maps_key:
             return self._fallback_estimate(destination)
 
-        origin = origin or Config.default_location
+        origin = origin or Config.default_home_location
 
         params = {
             "origins": origin,
@@ -1006,7 +1006,7 @@ class TravelEstimator:
             "travel_minutes": 15,  # Assume 15 min default
             "travel_text": "~15 mins (estimated)",
             "distance_text": "unknown",
-            "origin": Config.default_location,
+            "origin": Config.default_home_location,
             "departure_time": None,
         }
 ```
@@ -1194,7 +1194,7 @@ async def plan_day(tasks: list[str], existing_events: list[dict]) -> dict:
     produce an optimized daily schedule.
     """
     prompt = f"""
-My location: {Config.default_location}
+My location: {Config.default_home_location}
 Today's existing calendar events:
 {json.dumps(existing_events, indent=2)}
 

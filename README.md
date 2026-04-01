@@ -82,7 +82,7 @@ Minimum working local setup:
 - `GOOGLE_MAPS_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `MY_DEFAULT_LOCATION`
+- `DEFAULT_HOME_LOCATION`
 
 Recommended local defaults for Gemini or another free-tier provider:
 - `MAX_EMAILS_PER_CYCLE=3`
@@ -367,7 +367,7 @@ JSON body:
 ```
 
 If the phone replies in time, travel estimates use that fresh GPS fix.
-If it does not, the app falls back to `MY_DEFAULT_LOCATION`.
+If it does not, the app falls back to `DEFAULT_HOME_LOCATION`.
 
 ### Manual live location updates
 
@@ -393,7 +393,7 @@ In Vercel environment variables, set:
 - `GOOGLE_CREDENTIALS_JSON`
 - your LLM key
 - your Telegram or iMessage settings
-- `MY_DEFAULT_LOCATION`
+- `DEFAULT_HOME_LOCATION`
 - `GOOGLE_MAPS_API_KEY`
 - `CRON_SECRET`
 

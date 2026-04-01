@@ -73,15 +73,15 @@ def get_current_location() -> dict:
             "updated_at": state.get("updated_at"),
         }
 
-    if not Config.default_location:
+    if not Config.default_home_location:
         raise ConfigurationError(
-            "No live location is stored and MY_DEFAULT_LOCATION is not configured."
+            "No live location is stored and DEFAULT_HOME_LOCATION is not configured."
         )
 
     return {
-        "address": Config.default_location,
-        "lat": Config.default_lat,
-        "lng": Config.default_lng,
+        "address": Config.default_home_location,
+        "lat": Config.default_home_lat,
+        "lng": Config.default_home_lng,
         "source": "config",
         "updated_at": None,
     }

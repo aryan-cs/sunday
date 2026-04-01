@@ -33,6 +33,11 @@ def _get_optional_int(name: str) -> int | None:
     return int(value) if value else None
 
 
+def _get_with_legacy(primary: str, legacy: str, default: str = "") -> str:
+    """Read a new env var name, falling back to an older legacy name."""
+    return os.getenv(primary, os.getenv(legacy, default))
+
+
 class Config:
     """Single source of truth for all configuration."""
 
@@ -103,9 +108,13 @@ class Config:
     location_request_timeout_seconds: int = int(os.getenv("LOCATION_REQUEST_TIMEOUT_SECONDS", "20"))
 
     # ── Preferences ──
-    default_location: str = os.getenv("MY_DEFAULT_LOCATION", "")
-    default_lat: float | None = _get_optional_float("MY_DEFAULT_LATITUDE")
-    default_lng: float | None = _get_optional_float("MY_DEFAULT_LONGITUDE")
+    default_home_location: str = _get_with_legacy("DEFAULT_HOME_LOCATION", "MY_DEFAULT_LOCATION", "")
+    default_home_lat: float | None = _get_optional_float("DEFAULT_HOME_LATITUDE")
+    default_home_lng: float | None = _get_optional_float("DEFAULT_HOME_LONGITUDE")
+    if default_home_lat is None:
+        default_home_lat = _get_optional_float("MY_DEFAULT_LATITUDE")
+    if default_home_lng is None:
+        default_home_lng = _get_optional_float("MY_DEFAULT_LONGITUDE")
     prep_time: int = int(os.getenv("PREP_TIME_MINUTES", "15"))
     online_prep: int = int(os.getenv("ONLINE_PREP_MINUTES", "5"))
     travel_mode: str = os.getenv("DEFAULT_TRAVEL_MODE", "driving")
@@ -215,15 +224,15 @@ class Config:
                 "cannot get travel-aware reminders until Maps is configured."
             )
 
-        if not cls.default_location:
+        if not cls.default_home_location:
             warnings.append(
-                "MY_DEFAULT_LOCATION is not set. Travel estimation requires either "
-                "a live location update or a configured default location."
+                "DEFAULT_HOME_LOCATION is not set. Travel estimation requires either "
+                "a live location update or a configured home location."
             )
 
-        if (cls.default_lat is None) != (cls.default_lng is None):
+        if (cls.default_home_lat is None) != (cls.default_home_lng is None):
             warnings.append(
-                "MY_DEFAULT_LATITUDE and MY_DEFAULT_LONGITUDE should be set together "
+                "DEFAULT_HOME_LATITUDE and DEFAULT_HOME_LONGITUDE should be set together "
                 "if you want coordinate-based defaults."
             )
 

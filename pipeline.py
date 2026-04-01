@@ -137,9 +137,13 @@ async def process_single_email(
                 origin_label = requested_origin_address
                 origin_source = "phone_request" if requested_origin else None
 
-                if _is_location_request_enabled() and requested_origin is None and Config.default_location:
-                    origin_for_maps = Config.default_location
-                    origin_label = Config.default_location
+                if (
+                    _is_location_request_enabled()
+                    and requested_origin is None
+                    and Config.default_home_location
+                ):
+                    origin_for_maps = Config.default_home_location
+                    origin_label = Config.default_home_location
                     origin_source = "config"
 
                 try:

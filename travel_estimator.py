@@ -137,7 +137,7 @@ class TravelEstimator:
 
         if not _origin:
             raise TravelEstimationError(
-                "No origin is available for travel estimation. Configure MY_DEFAULT_LOCATION "
+                "No origin is available for travel estimation. Configure DEFAULT_HOME_LOCATION "
                 "or send a live location update."
             )
 

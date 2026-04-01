@@ -194,6 +194,78 @@ class CalendarManager:
         return "\n".join(parts)
 
     @staticmethod
+    def _event_context(parsed_event: dict) -> str:
+        """Return a lowercase text blob describing the event."""
+        parts = [
+            parsed_event.get("title", ""),
+            parsed_event.get("description", ""),
+            parsed_event.get("location", ""),
+        ]
+        return " ".join(part for part in parts if part).lower()
+
+    @classmethod
+    def _wants_day_before_reminder(
+        cls,
+        start_dt: datetime,
+        parsed_event: dict,
+        travel_info: dict | None,
+    ) -> bool:
+        """
+        Decide whether a 1-day reminder is actually helpful for this event.
+
+        Short casual events like lunch should not get a day-before ping. More
+        important, earlier, or logistically heavy events still should.
+        """
+        try:
+            end_dt = datetime.fromisoformat(f"{parsed_event['date']}T{parsed_event['end_time']}:00")
+        except (KeyError, TypeError, ValueError):
+            return False
+
+        duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
+        context = cls._event_context(parsed_event)
+        travel_minutes = int((travel_info or {}).get("travel_minutes") or 0)
+
+        casual_keywords = (
+            "lunch",
+            "breakfast",
+            "brunch",
+            "dinner",
+            "coffee",
+            "catch up",
+            "hangout",
+        )
+        if any(keyword in context for keyword in casual_keywords) and duration_minutes <= 90:
+            return False
+
+        important_keywords = (
+            "interview",
+            "exam",
+            "flight",
+            "airport",
+            "doctor",
+            "dentist",
+            "appointment",
+            "orientation",
+            "presentation",
+            "deadline",
+            "wedding",
+            "conference",
+        )
+        if any(keyword in context for keyword in important_keywords):
+            return True
+
+        if start_dt.hour < 9:
+            return True
+
+        if travel_minutes >= 45:
+            return True
+
+        if duration_minutes >= 120:
+            return True
+
+        return False
+
+    @staticmethod
     def _compute_smart_reminders(
         start_dt: datetime,
         parsed_event: dict,
@@ -202,7 +274,6 @@ class CalendarManager:
         """
         Compute popup reminder offsets in minutes before the event start.
         """
-        del start_dt
         reminders: list[dict] = []
 
         if parsed_event.get("is_online"):
@@ -218,5 +289,6 @@ class CalendarManager:
             if leave_by_minutes > 20:
                 reminders.append({"method": "popup", "minutes": leave_by_minutes + 30})
 
-        reminders.append({"method": "popup", "minutes": 1440})
+        if CalendarManager._wants_day_before_reminder(start_dt, parsed_event, travel_info):
+            reminders.append({"method": "popup", "minutes": 1440})
         return reminders[:5]

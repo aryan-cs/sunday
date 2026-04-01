@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from calendar_manager import CalendarManager
 
 
@@ -77,3 +79,46 @@ def test_calendar_manager_sets_extended_property_on_insert(monkeypatch):
 
     assert result["status"] == "created"
     assert events.insert_calls[0]["body"]["extendedProperties"]["private"]["smartCalendarEmailId"] == "gmail-123"
+
+
+def test_compute_smart_reminders_skips_day_before_for_casual_lunch(monkeypatch):
+    monkeypatch.setattr("calendar_manager.Config.prep_time", 15)
+
+    reminders = CalendarManager._compute_smart_reminders(
+        datetime(2026, 4, 1, 15, 0),
+        {
+            "title": "Lunch with Aryan Gupta",
+            "description": "",
+            "date": "2026-04-01",
+            "start_time": "15:00",
+            "end_time": "16:00",
+            "is_online": False,
+            "location": "Illini Union",
+        },
+        {"travel_minutes": 6},
+    )
+
+    assert {"method": "popup", "minutes": 21} in reminders
+    assert {"method": "popup", "minutes": 51} in reminders
+    assert {"method": "popup", "minutes": 1440} not in reminders
+
+
+def test_compute_smart_reminders_keeps_day_before_for_interview(monkeypatch):
+    monkeypatch.setattr("calendar_manager.Config.online_prep", 5)
+
+    reminders = CalendarManager._compute_smart_reminders(
+        datetime(2026, 4, 2, 9, 0),
+        {
+            "title": "Interview with Ramp",
+            "description": "",
+            "date": "2026-04-02",
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "is_online": True,
+            "location": None,
+        },
+        None,
+    )
+
+    assert {"method": "popup", "minutes": 5} in reminders
+    assert {"method": "popup", "minutes": 1440} in reminders

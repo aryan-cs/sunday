@@ -29,6 +29,7 @@ class TravelEstimator:
 
     BASE_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
     GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+    _LOCAL_BIAS_PADDING = 0.15
 
     @staticmethod
     def _default_origin() -> tuple[str | None, dict]:
@@ -62,7 +63,103 @@ class TravelEstimator:
         normalize = lambda value: re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
         return normalize(left) == normalize(right)
 
-    async def resolve_destination(self, destination: str) -> dict:
+    @classmethod
+    def _local_search_bounds(cls) -> str | None:
+        """Return a bounds string that biases geocoding toward the user's local area."""
+        points = [
+            (Config.default_home_lat, Config.default_home_lng),
+            (Config.default_work_lat, Config.default_work_lng),
+        ]
+        coords = [(lat, lng) for lat, lng in points if lat is not None and lng is not None]
+        if not coords:
+            return None
+
+        lats = [lat for lat, _ in coords]
+        lngs = [lng for _, lng in coords]
+        padding = cls._LOCAL_BIAS_PADDING
+        southwest = f"{min(lats) - padding},{min(lngs) - padding}"
+        northeast = f"{max(lats) + padding},{max(lngs) + padding}"
+        return f"{southwest}|{northeast}"
+
+    @staticmethod
+    def _looks_like_bare_place_name(destination: str) -> bool:
+        """Return true for short ambiguous place names like 'Chili's'."""
+        lowered = destination.lower().strip()
+        if not lowered or "http" in lowered:
+            return False
+        if any(char.isdigit() for char in lowered):
+            return False
+        if "," in lowered:
+            return False
+        return len(lowered.split()) <= 4
+
+    @staticmethod
+    def _context_place_queries(destination: str, context_text: str | None) -> list[str]:
+        """Return smarter search variants for ambiguous venues based on event context."""
+        if not context_text:
+            return []
+
+        lowered_context = context_text.lower()
+        queries: list[str] = []
+
+        dining_keywords = ("dinner", "lunch", "breakfast", "brunch", "ramen", "food", "eat")
+        coffee_keywords = ("coffee", "cafe", "latte", "espresso")
+
+        if any(keyword in lowered_context for keyword in dining_keywords):
+            queries.extend(
+                [
+                    f"{destination} restaurant",
+                    f"{destination} grill & bar",
+                    f"{destination} grill and bar",
+                ]
+            )
+        elif any(keyword in lowered_context for keyword in coffee_keywords):
+            queries.extend([f"{destination} cafe", f"{destination} coffee"])
+
+        return queries
+
+    @classmethod
+    def _destination_queries(cls, destination: str, context_text: str | None = None) -> list[str]:
+        """Build ordered geocoding queries for a destination string."""
+        base = destination.strip()
+        variants = [
+            base,
+            base.replace("’", "'"),
+            base.replace("'", ""),
+        ]
+
+        if cls._looks_like_bare_place_name(base):
+            variants.extend(cls._context_place_queries(base, context_text))
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for variant in variants:
+            cleaned = variant.strip()
+            key = cleaned.lower()
+            if cleaned and key not in seen:
+                seen.add(key)
+                deduped.append(cleaned)
+        return deduped
+
+    async def _geocode_query(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        bounds: str | None = None,
+    ) -> dict:
+        """Perform one geocoding request with optional local-area bias."""
+        params: dict[str, str] = {
+            "address": query,
+            "key": Config.google_maps_key,
+        }
+        if bounds:
+            params["bounds"] = bounds
+
+        resp = await client.get(self.GEOCODE_URL, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def resolve_destination(self, destination: str, context_text: str | None = None) -> dict:
         """
         Resolve a human place name to a friendlier display string and exact address.
 
@@ -80,14 +177,28 @@ class TravelEstimator:
                 "GOOGLE_MAPS_API_KEY is required for travel-aware reminders."
             )
 
+        bounds = self._local_search_bounds()
+        queries = self._destination_queries(destination, context_text)
+
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    self.GEOCODE_URL,
-                    params={"address": destination, "key": Config.google_maps_key},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+                data: dict | None = None
+                last_zero_results = False
+
+                for query in queries:
+                    data = await self._geocode_query(client, query, bounds=bounds)
+                    status = data.get("status")
+                    if status == "OK":
+                        break
+                    if status == "ZERO_RESULTS":
+                        last_zero_results = True
+                        continue
+                    raise TravelEstimationError(
+                        f"Google Maps could not resolve destination {destination!r}: {status}."
+                    )
+
+                if data is None:
+                    data = {"status": "ZERO_RESULTS"} if last_zero_results else {"status": "ZERO_RESULTS"}
         except (httpx.HTTPError, ValueError) as exc:
             raise TravelEstimationError("Google Maps geocoding request failed.") from exc
 

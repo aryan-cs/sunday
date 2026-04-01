@@ -148,6 +148,20 @@ def _event_start_dt(event: dict) -> datetime | None:
     return start_dt.replace(tzinfo=ZoneInfo(Config.timezone))
 
 
+def _destination_context_text(parsed: dict, email_data: dict) -> str:
+    """Build context that helps resolve vague place names like restaurant nicknames."""
+    event = parsed.get("event") or {}
+    parts = [
+        parsed.get("summary", ""),
+        event.get("title", ""),
+        event.get("description", ""),
+        " ".join(parsed.get("action_items", [])),
+        email_data.get("subject", ""),
+        email_data.get("body", ""),
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
 def _google_event_dt(event_item: dict, edge: str) -> datetime | None:
     """Parse a Google Calendar start/end dateTime into local timezone."""
     raw = ((event_item.get(edge) or {}).get("dateTime") or "").strip()
@@ -345,7 +359,10 @@ async def process_single_email(
                 )
 
                 try:
-                    resolved_location = await travel.resolve_destination(event["location"])
+                    resolved_location = await travel.resolve_destination(
+                        event["location"],
+                        context_text=_destination_context_text(parsed, email_data),
+                    )
                 except (ConfigurationError, TravelEstimationError) as exc:
                     log.warning("  → Exact address lookup unavailable: %s", exc)
                     processing_notes.append(f"Exact address lookup unavailable: {exc}")

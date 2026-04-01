@@ -45,7 +45,8 @@ class _FakeTravel:
     def __init__(self):
         self.last_estimate_args = None
 
-    async def resolve_destination(self, destination):
+    async def resolve_destination(self, destination, context_text=None):
+        del context_text
         if destination == "Illini Union":
             return {
                 "formatted_address": "1401 W Green St, Urbana, IL 61801",
@@ -77,8 +78,8 @@ class _FakeTravel:
 
 
 class _ResolveDeniedTravel(_FakeTravel):
-    async def resolve_destination(self, destination):
-        del destination
+    async def resolve_destination(self, destination, context_text=None):
+        del destination, context_text
         raise TravelEstimationError("Google Maps could not resolve destination 'Illini Union': REQUEST_DENIED.")
 
 

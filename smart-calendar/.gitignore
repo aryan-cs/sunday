@@ -1,0 +1,21 @@
+# Secrets — NEVER commit these
+config.env
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+.uv/
+.state/
+dist/
+*.egg-info/
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store

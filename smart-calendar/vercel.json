@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "server.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/process",
+      "schedule": "* * * * *"
+    }
+  ],
+  "env": {
+    "ACTIVE_LLM_PROVIDER": "gemini"
+  }
+}

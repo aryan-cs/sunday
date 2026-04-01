@@ -113,7 +113,7 @@ class Config:
     # ── Advanced ──
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
-    poll_interval: int = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
+    poll_interval: int = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
     max_emails_per_cycle: int = int(os.getenv("MAX_EMAILS_PER_CYCLE", "3"))
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     openrouter_site_url: str = os.getenv("OPENROUTER_SITE_URL", "")

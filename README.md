@@ -270,6 +270,8 @@ Expected flow:
 4. Telegram or iMessage summary is delivered
 5. the Gmail message is marked processed only after delivery succeeds
 
+The default polling interval is now `10` seconds, so new test emails should usually be picked up quickly.
+
 If you start the app with 500 unread emails already in your inbox, it will not try to process that whole backlog.
 
 ## Useful Commands

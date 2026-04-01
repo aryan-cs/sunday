@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from email_parser import EmailParseError, get_calendar_readiness_issues, parse_email
+from email_parser import EmailParseError, enrich_event_details, get_calendar_readiness_issues, parse_email
 
 
 @pytest.mark.anyio
@@ -74,3 +74,36 @@ def test_calendar_readiness_issues_detect_missing_fields():
     assert "missing start time" in issues
     assert "missing end time" in issues
     assert "missing location for an in-person event" in issues
+
+
+def test_enrich_event_details_infers_title_and_end_time_for_lunch_email():
+    enriched = enrich_event_details(
+        {
+            "has_event": True,
+            "needs_response": False,
+            "urgency": "low",
+            "summary": "Aryan Gupta wants to meet for lunch today",
+            "event": {
+                "title": None,
+                "date": "2026-04-01",
+                "start_time": "15:00",
+                "end_time": None,
+                "location": "Illini Union",
+                "is_online": False,
+                "meeting_link": None,
+                "description": None,
+                "attendees": [],
+                "organizer": "Aryan Gupta",
+            },
+            "action_items": ["Meet Aryan Gupta for lunch at Illini Union at 3:00 PM"],
+            "can_wait": True,
+        },
+        {
+            "from": "Aryan Gupta <aryan05g@gmail.com>",
+            "subject": "",
+            "body": "hey meet me for lunch at the illini union at 3:00 pm today",
+        },
+    )
+
+    assert enriched["event"]["title"] == "Lunch with Aryan Gupta"
+    assert enriched["event"]["end_time"] == "16:00"

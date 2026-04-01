@@ -9,7 +9,7 @@ import logging
 
 from calendar_manager import CalendarManager
 from config import Config
-from email_parser import get_calendar_readiness_issues, parse_email, summarise_parsed
+from email_parser import enrich_event_details, get_calendar_readiness_issues, parse_email, summarise_parsed
 from gmail_watcher import GmailWatcher
 from messenger import send_summary
 from travel_estimator import TravelEstimator
@@ -60,6 +60,7 @@ async def process_single_email(
     log.info("Processing: %s", email_data.get("subject", "—"))
 
     parsed = await parse_email(email_data)
+    parsed = enrich_event_details(parsed, email_data)
     log.info("  %s", summarise_parsed(parsed))
 
     calendar_status = "not_applicable"

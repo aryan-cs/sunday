@@ -15,8 +15,12 @@ class _FakeGmail:
 
 
 class _FakeCalendar:
+    def __init__(self):
+        self.last_event = None
+
     def create_smart_event(self, parsed_event, travel_info=None, source_email_id=None):
-        del parsed_event, travel_info, source_email_id
+        del travel_info, source_email_id
+        self.last_event = parsed_event
         return {
             "status": "created",
             "event": {"htmlLink": "https://calendar.google.com/event"},
@@ -102,3 +106,52 @@ async def test_process_single_email_leaves_message_unprocessed_on_summary_failur
         )
 
     assert gmail.processed_ids == []
+
+
+@pytest.mark.anyio
+async def test_process_single_email_enriches_missing_title_and_end_time(monkeypatch):
+    async def fake_parse_email(email_data):
+        del email_data
+        return {
+            "has_event": True,
+            "needs_response": False,
+            "urgency": "low",
+            "summary": "Aryan Gupta wants to meet for lunch today",
+            "event": {
+                "title": None,
+                "date": "2026-04-01",
+                "start_time": "15:00",
+                "end_time": None,
+                "location": "Illini Union",
+                "is_online": False,
+            },
+            "action_items": ["Meet Aryan Gupta for lunch at Illini Union at 3:00 PM"],
+            "can_wait": True,
+        }
+
+    async def fake_send_summary(**kwargs):
+        del kwargs
+        return None
+
+    monkeypatch.setattr("pipeline.parse_email", fake_parse_email)
+    monkeypatch.setattr("pipeline.send_summary", fake_send_summary)
+
+    calendar = _FakeCalendar()
+    gmail = _FakeGmail()
+
+    result = await process_single_email(
+        {
+            "id": "gmail-3",
+            "thread_id": "thread-3",
+            "from": "Aryan Gupta <aryan05g@gmail.com>",
+            "subject": "",
+            "body": "hey meet me for lunch at the illini union at 3:00 pm today",
+        },
+        gmail,
+        calendar,
+        _FakeTravel(),
+    )
+
+    assert result["calendar_status"] == "created"
+    assert calendar.last_event["title"] == "Lunch with Aryan Gupta"
+    assert calendar.last_event["end_time"] == "16:00"

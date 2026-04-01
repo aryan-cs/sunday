@@ -8,7 +8,8 @@ event details are, action items, urgency, etc.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.utils import parseaddr
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
@@ -169,6 +170,7 @@ Return this exact JSON structure:
 Rules:
 - If has_event is false, set event to null.
 - If you are unsure about any field, use null rather than guessing.
+- If an event is clearly present but no explicit title is written, infer a short natural title.
 - Do not invent or estimate an end time, location, meeting link, or attendees.
 - Parse dates relative to today's date which will be provided in the user prompt.
 - For Zoom/Meet/Teams links, extract the full URL from the email body.
@@ -186,10 +188,128 @@ CALENDAR_REQUIRED_EVENT_FIELDS = {
     "is_online": "missing online/in-person flag",
 }
 
+EVENT_DURATION_HINTS: tuple[tuple[tuple[str, ...], int], ...] = (
+    (("coffee", "coffee chat"), 30),
+    (("phone screen", "screening call"), 30),
+    (("standup", "check-in", "check in", "sync"), 30),
+    (("office hours",), 30),
+    (("lunch", "breakfast"), 60),
+    (("meeting", "meet", "interview", "call", "appointment"), 60),
+    (("brunch", "dinner"), 90),
+)
+
 
 def _today_local_date() -> str:
     """Return today's date in the configured timezone."""
     return datetime.now(ZoneInfo(Config.timezone)).date().isoformat()
+
+
+def _event_context_text(parsed: dict, email_data: dict) -> str:
+    """Return a single lowercase text blob for deterministic event inference."""
+    event = parsed.get("event") or {}
+    parts = [
+        parsed.get("summary", ""),
+        " ".join(parsed.get("action_items", [])),
+        event.get("description", ""),
+        email_data.get("subject", ""),
+        email_data.get("body", ""),
+    ]
+    return " ".join(part for part in parts if part).lower()
+
+
+def _sender_name(from_header: str) -> str | None:
+    """Extract the display name from a From header."""
+    name, address = parseaddr(from_header)
+    cleaned_name = name.strip().strip('"')
+    if cleaned_name:
+        return cleaned_name
+
+    local_part = address.split("@", 1)[0].replace(".", " ").replace("_", " ").strip()
+    if local_part:
+        return " ".join(piece.capitalize() for piece in local_part.split())
+
+    return None
+
+
+def _infer_event_title(parsed: dict, email_data: dict) -> str | None:
+    """Infer a concise event title from the parsed summary, body, and sender."""
+    context = _event_context_text(parsed, email_data)
+    sender = _sender_name(email_data.get("from", ""))
+
+    titled_patterns: tuple[tuple[tuple[str, ...], str], ...] = (
+        (("lunch",), "Lunch"),
+        (("breakfast",), "Breakfast"),
+        (("brunch",), "Brunch"),
+        (("dinner",), "Dinner"),
+        (("coffee", "coffee chat"), "Coffee"),
+        (("interview",), "Interview"),
+        (("office hours",), "Office Hours"),
+        (("phone screen", "screening call"), "Phone Screen"),
+        (("meeting", "meet", "sync", "call"), "Meeting"),
+    )
+
+    for keywords, title_base in titled_patterns:
+        if any(keyword in context for keyword in keywords):
+            if sender and title_base in {"Lunch", "Breakfast", "Brunch", "Dinner", "Coffee"}:
+                return f"{title_base} with {sender}"
+            if sender and title_base in {"Interview", "Meeting", "Phone Screen"}:
+                return f"{title_base} with {sender}"
+            return title_base
+
+    for candidate in (parsed.get("summary", ""), *(parsed.get("action_items") or [])):
+        cleaned = candidate.strip().rstrip(".!?")
+        if cleaned:
+            return cleaned[:80]
+
+    return None
+
+
+def _infer_end_time(date_str: str | None, start_time: str | None, context: str) -> str | None:
+    """Infer an end time by applying a category-based default duration."""
+    if not date_str or not start_time:
+        return None
+
+    duration_minutes = 60
+    for keywords, hinted_duration in EVENT_DURATION_HINTS:
+        if any(keyword in context for keyword in keywords):
+            duration_minutes = hinted_duration
+            break
+
+    try:
+        start_dt = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+
+    end_dt = start_dt + timedelta(minutes=duration_minutes)
+    return end_dt.strftime("%H:%M")
+
+
+def enrich_event_details(parsed: dict, email_data: dict) -> dict:
+    """
+    Fill in missing event details that can be inferred safely from context.
+
+    This is intentionally separate from raw LLM parsing so we can keep model
+    extraction strict while still producing production-useful calendar events.
+    """
+    if not parsed.get("has_event") or not parsed.get("event"):
+        return parsed
+
+    event = dict(parsed["event"])
+    enriched = dict(parsed)
+    enriched["event"] = event
+    context = _event_context_text(parsed, email_data)
+
+    if not event.get("title"):
+        inferred_title = _infer_event_title(parsed, email_data)
+        if inferred_title:
+            event["title"] = inferred_title
+
+    if not event.get("end_time"):
+        inferred_end_time = _infer_end_time(event.get("date"), event.get("start_time"), context)
+        if inferred_end_time:
+            event["end_time"] = inferred_end_time
+
+    return enriched
 
 
 async def parse_email(email_data: dict) -> dict:

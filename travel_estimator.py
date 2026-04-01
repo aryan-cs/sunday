@@ -34,7 +34,10 @@ class TravelEstimator:
     PLACES_TEXTSEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
     _LOCAL_BIAS_PADDING = 0.15
     _PLACE_RESULT_LIMIT = 5
+    _GEOCODE_RESULT_LIMIT = 5
     _LOCAL_SEARCH_RADIUS_METERS = 30000
+    _AMBIGUOUS_RESULT_MAX_DISTANCE_METERS = 120000
+    _MIN_AMBIGUOUS_GEOCODE_SCORE = 65.0
 
     @staticmethod
     def _default_origin() -> tuple[str | None, dict]:
@@ -175,6 +178,41 @@ class TravelEstimator:
         return queries
 
     @staticmethod
+    def _origin_context_queries(destination: str, origin_context: str | None) -> list[str]:
+        """Return place-query variants that include the likely origin area."""
+        if not origin_context:
+            return []
+
+        cleaned = re.sub(r"\s+", " ", origin_context).strip(" ,")
+        if not cleaned:
+            return []
+
+        queries = [
+            f"{destination} near {cleaned}",
+            f"{destination} {cleaned}",
+        ]
+
+        locality_hint = ""
+        if "," in cleaned:
+            parts = [part.strip() for part in cleaned.split(",") if part.strip()]
+            if len(parts) >= 2:
+                locality_hint = ", ".join(parts[-2:])
+        else:
+            words = cleaned.split()
+            if len(words) >= 2:
+                locality_hint = " ".join(words[-2:])
+
+        if locality_hint and locality_hint.lower() != cleaned.lower():
+            queries.extend(
+                [
+                    f"{destination} near {locality_hint}",
+                    f"{destination} {locality_hint}",
+                ]
+            )
+
+        return queries
+
+    @staticmethod
     def _normalize_search_text(text: str) -> str:
         """Normalize text for fuzzy place matching."""
         normalized = text.lower().replace("&", " and ").replace("’", "'")
@@ -198,6 +236,37 @@ class TravelEstimator:
         if any(word in lowered_context for word in ("coffee", "cafe", "latte", "espresso")):
             return {"cafe", "coffee_shop", "bakery", "food"}
         return set()
+
+    @classmethod
+    def _candidate_text_score(cls, destination: str, query: str, candidate_text: str) -> float:
+        """Return a text similarity score between the destination/query and a candidate label."""
+        destination_norm = cls._normalize_search_text(destination)
+        query_norm = cls._normalize_search_text(query)
+        candidate_norm = cls._normalize_search_text(candidate_text)
+        destination_tokens = cls._tokenize_search_text(destination)
+        candidate_tokens = cls._tokenize_search_text(candidate_text)
+
+        score = 0.0
+
+        if destination_norm and destination_norm == candidate_norm:
+            score += 120
+        if destination_norm and destination_norm in candidate_norm:
+            score += 75
+        if query_norm and query_norm in candidate_norm:
+            score += 20
+
+        if destination_norm and candidate_norm:
+            score += 45 * SequenceMatcher(None, destination_norm, candidate_norm).ratio()
+        if query_norm and candidate_norm:
+            score += 15 * SequenceMatcher(None, query_norm, candidate_norm).ratio()
+
+        if destination_tokens:
+            overlap = len(destination_tokens & candidate_tokens) / len(destination_tokens)
+            score += 55 * overlap
+            if destination_tokens <= candidate_tokens:
+                score += 20
+
+        return score
 
     @staticmethod
     def _haversine_distance_meters(
@@ -249,36 +318,14 @@ class TravelEstimator:
     ) -> float:
         """Score a Places candidate so we prefer the best local exact match."""
         candidate_name = cls._clean_place_name(candidate.get("name", "") or "")
-        destination_norm = cls._normalize_search_text(destination)
-        query_norm = cls._normalize_search_text(query)
-        candidate_norm = cls._normalize_search_text(candidate_name)
-        destination_tokens = cls._tokenize_search_text(destination)
-        candidate_tokens = cls._tokenize_search_text(candidate_name)
-
-        score = 0.0
-
-        if destination_norm and destination_norm == candidate_norm:
-            score += 120
-        if destination_norm and destination_norm in candidate_norm:
-            score += 75
-        if query_norm and query_norm in candidate_norm:
-            score += 20
-
-        if destination_norm and candidate_norm:
-            score += 45 * SequenceMatcher(None, destination_norm, candidate_norm).ratio()
-        if query_norm and candidate_norm:
-            score += 15 * SequenceMatcher(None, query_norm, candidate_norm).ratio()
-
-        if destination_tokens:
-            overlap = len(destination_tokens & candidate_tokens) / len(destination_tokens)
-            score += 55 * overlap
-            if destination_tokens <= candidate_tokens:
-                score += 20
+        score = cls._candidate_text_score(destination, query, candidate_name)
 
         preferred_types = cls._context_place_types(context_text)
         candidate_types = set(candidate.get("types") or [])
         if preferred_types and candidate_types & preferred_types:
             score += 18
+        elif preferred_types and "airport" in candidate_types:
+            score -= 30
 
         if candidate.get("business_status") == "OPERATIONAL":
             score += 5
@@ -290,6 +337,36 @@ class TravelEstimator:
                 score -= 40
         elif reference_points:
             score -= 10
+
+        return score
+
+    @classmethod
+    def _score_geocode_candidate(
+        cls,
+        destination: str,
+        query: str,
+        candidate: dict,
+        context_text: str | None,
+        reference_points: list[tuple[float, float]],
+    ) -> float:
+        """Score a geocode candidate so vague business names stay local and relevant."""
+        candidate_label = cls._clean_formatted_address(candidate.get("formatted_address", "") or "")
+        score = cls._candidate_text_score(destination, query, candidate_label)
+
+        candidate_types = set(candidate.get("types") or [])
+        preferred_types = cls._context_place_types(context_text)
+        if preferred_types and candidate_types & preferred_types:
+            score += 15
+        elif preferred_types and "airport" in candidate_types:
+            score -= 45
+
+        distance_meters = cls._candidate_distance_meters(candidate, reference_points)
+        if distance_meters is not None:
+            score += max(0.0, 28 - min(distance_meters, 160_000) / 6_000)
+            if distance_meters > cls._AMBIGUOUS_RESULT_MAX_DISTANCE_METERS:
+                score -= 55
+        elif reference_points:
+            score -= 15
 
         return score
 
@@ -329,6 +406,58 @@ class TravelEstimator:
         return best_match
 
     @classmethod
+    def _select_best_geocode_match(
+        cls,
+        destination: str,
+        candidates: list[tuple[str, dict]],
+        context_text: str | None,
+        reference_points: list[tuple[float, float]],
+    ) -> tuple[dict | None, float]:
+        """Choose the strongest geocoded candidate and keep its confidence score."""
+        best_match: dict | None = None
+        best_score = float("-inf")
+
+        for query, result in candidates:
+            score = cls._score_geocode_candidate(
+                destination,
+                query,
+                result,
+                context_text,
+                reference_points,
+            )
+            if score > best_score:
+                best_score = score
+                best_match = result
+
+        return best_match, best_score
+
+    @classmethod
+    def _geocode_match_is_confident(
+        cls,
+        destination: str,
+        candidate: dict | None,
+        score: float,
+        reference_points: list[tuple[float, float]],
+    ) -> bool:
+        """Return true when a geocode candidate is plausible for a vague destination."""
+        if candidate is None:
+            return False
+        if not cls._looks_like_bare_place_name(destination):
+            return True
+        if not reference_points:
+            return True
+
+        distance_meters = cls._candidate_distance_meters(candidate, reference_points)
+        if distance_meters is not None and distance_meters <= cls._AMBIGUOUS_RESULT_MAX_DISTANCE_METERS / 2:
+            return True
+
+        candidate_label = cls._clean_formatted_address(candidate.get("formatted_address", "") or "")
+        if cls._tokenize_search_text(destination) & cls._tokenize_search_text(candidate_label):
+            return True
+
+        return score >= cls._MIN_AMBIGUOUS_GEOCODE_SCORE
+
+    @classmethod
     def _build_display_location(
         cls,
         place_name: str | None,
@@ -361,7 +490,12 @@ class TravelEstimator:
         return fallback
 
     @classmethod
-    def _destination_queries(cls, destination: str, context_text: str | None = None) -> list[str]:
+    def _destination_queries(
+        cls,
+        destination: str,
+        context_text: str | None = None,
+        origin_context: str | None = None,
+    ) -> list[str]:
         """Build ordered geocoding queries for a destination string."""
         base = destination.strip()
         variants = [
@@ -372,6 +506,7 @@ class TravelEstimator:
 
         if cls._looks_like_bare_place_name(base):
             variants.extend(cls._context_place_queries(base, context_text))
+            variants.extend(cls._origin_context_queries(base, origin_context))
 
         deduped: list[str] = []
         seen: set[str] = set()
@@ -426,6 +561,7 @@ class TravelEstimator:
         destination: str,
         context_text: str | None = None,
         origin_bias: str | None = None,
+        origin_context: str | None = None,
     ) -> dict:
         """
         Resolve a human place name to exact routing and display/calendar strings.
@@ -448,7 +584,7 @@ class TravelEstimator:
         bounds = self._local_search_bounds()
         reference_points = self._search_reference_points(origin_bias)
         search_location, search_radius = self._local_search_circle(origin_bias)
-        queries = self._destination_queries(destination, context_text)
+        queries = self._destination_queries(destination, context_text, origin_context)
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -509,14 +645,16 @@ class TravelEstimator:
                         "routing_destination": formatted_address or place_name or destination,
                     }
 
-                data: dict | None = None
+                geocode_candidates: list[tuple[str, dict]] = []
                 last_zero_results = False
 
                 for query in queries:
                     data = await self._geocode_query(client, query, bounds=bounds)
                     status = data.get("status")
                     if status == "OK":
-                        break
+                        for result in data.get("results", [])[: self._GEOCODE_RESULT_LIMIT]:
+                            geocode_candidates.append((query, result))
+                        continue
                     if status == "ZERO_RESULTS":
                         last_zero_results = True
                         continue
@@ -524,8 +662,24 @@ class TravelEstimator:
                         f"Google Maps could not resolve destination {destination!r}: {status}."
                     )
 
-                if data is None:
+                if not geocode_candidates:
                     data = {"status": "ZERO_RESULTS"} if last_zero_results else {"status": "ZERO_RESULTS"}
+                else:
+                    best_match, best_score = self._select_best_geocode_match(
+                        destination,
+                        geocode_candidates,
+                        context_text,
+                        reference_points,
+                    )
+                    if not self._geocode_match_is_confident(
+                        destination,
+                        best_match,
+                        best_score,
+                        reference_points,
+                    ):
+                        data = {"status": "ZERO_RESULTS"}
+                    else:
+                        data = {"status": "OK", "results": [best_match]}
         except (httpx.HTTPError, ValueError) as exc:
             raise TravelEstimationError("Google Maps geocoding request failed.") from exc
 

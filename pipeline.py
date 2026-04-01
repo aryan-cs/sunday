@@ -377,6 +377,7 @@ async def process_single_email(
                         event["location"],
                         context_text=_destination_context_text(parsed, email_data),
                         origin_bias=origin_for_maps,
+                        origin_context=origin_label,
                     )
                 except (ConfigurationError, TravelEstimationError) as exc:
                     log.warning("  → Exact address lookup unavailable: %s", exc)

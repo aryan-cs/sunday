@@ -119,11 +119,14 @@ async def test_travel_estimator_resolves_exact_destination_address(monkeypatch):
         "results": [
             {
                 "formatted_address": "1401 W Green St, Urbana, IL 61801, USA",
+                "geometry": {"location": {"lat": 40.1106, "lng": -88.2272}},
             }
         ],
     }
 
     monkeypatch.setattr("travel_estimator.Config.google_maps_key", "test-key")
+    monkeypatch.setattr("travel_estimator.Config.default_home_lat", 40.1165658)
+    monkeypatch.setattr("travel_estimator.Config.default_home_lng", -88.2219593)
     monkeypatch.setattr(
         "travel_estimator.httpx.AsyncClient",
         lambda timeout: _FakeMultiAsyncClient(
@@ -176,7 +179,11 @@ async def test_travel_estimator_retries_ambiguous_restaurant_names_with_context(
     )
 
     estimator = TravelEstimator()
-    resolved = await estimator.resolve_destination("Chili's", context_text="Dinner at Chili's with Aryan")
+    resolved = await estimator.resolve_destination(
+        "Chili's",
+        context_text="Dinner at Chili's with Aryan",
+        origin_context="Campus Circle Urbana",
+    )
 
     assert resolved["formatted_address"] == "702 W Town Center Blvd, Champaign, IL 61822"
     assert resolved["canonical_name"] == "Chili's Grill & Bar"
@@ -188,6 +195,7 @@ async def test_travel_estimator_retries_ambiguous_restaurant_names_with_context(
         for _, params in client.calls
         if "query" in params
     )
+    assert any("campus circle urbana" in params.get("query", "").lower() for _, params in client.calls if "query" in params)
     assert all("location" in params and "radius" in params for _, params in client.calls if "query" in params)
 
 
@@ -239,3 +247,42 @@ async def test_travel_estimator_ranks_multiple_local_place_candidates(monkeypatc
     assert resolved["canonical_name"] == "Chili's Grill & Bar"
     assert resolved["formatted_address"] == "702 W Town Center Blvd, Champaign, IL 61822"
     assert resolved["calendar_location"] == "Chili's Grill & Bar, 702 W Town Center Blvd, Champaign, IL 61822"
+
+
+@pytest.mark.anyio
+async def test_travel_estimator_rejects_far_unrelated_geocode_for_ambiguous_chain(monkeypatch):
+    def resolver(url, params):
+        if url == TravelEstimator.PLACES_TEXTSEARCH_URL:
+            return {"status": "REQUEST_DENIED", "results": []}
+        assert url == TravelEstimator.GEOCODE_URL
+        return {
+            "status": "OK",
+            "results": [
+                {
+                    "formatted_address": "Chicago O'Hare International Airport, Terminal 1, Chicago, IL 60666, USA",
+                    "geometry": {"location": {"lat": 41.9742, "lng": -87.9073}},
+                    "types": ["airport", "establishment", "point_of_interest"],
+                }
+            ],
+        }
+
+    client = _QueryAwareAsyncClient(resolver)
+    monkeypatch.setattr("travel_estimator.Config.google_maps_key", "test-key")
+    monkeypatch.setattr("travel_estimator.Config.default_home_lat", 40.1165658)
+    monkeypatch.setattr("travel_estimator.Config.default_home_lng", -88.2219593)
+    monkeypatch.setattr(
+        "travel_estimator.httpx.AsyncClient",
+        lambda timeout: client,
+    )
+
+    estimator = TravelEstimator()
+    resolved = await estimator.resolve_destination(
+        "Chili's",
+        context_text="Dinner at Chili's with Aryan",
+        origin_bias="40.1165658,-88.2219593",
+        origin_context="Campus Circle Urbana",
+    )
+
+    assert resolved["formatted_address"] is None
+    assert resolved["display_location"] == "Chili's"
+    assert resolved["calendar_location"] == "Chili's"

@@ -223,21 +223,26 @@ class CalendarManager:
 
         if travel_info:
             travel_minutes = int(travel_info.get("travel_minutes") or 0)
+            travel_sentence: str | None = None
             if travel_minutes > 0:
                 travel_type = CalendarManager._travel_type_phrase(Config.travel_mode)
                 origin = (travel_info.get("origin") or "").strip()
                 travel_sentence = f"{travel_minutes} min {travel_type}"
                 if origin:
                     travel_sentence += f" from {origin}"
-                detail_sentences.append(travel_sentence)
             if travel_info.get("departure_time"):
-                detail_sentences.append(f"Leave by: {travel_info['departure_time']}")
+                if travel_sentence:
+                    travel_sentence += f", leave by: {travel_info['departure_time']}"
+                else:
+                    travel_sentence = f"leave by: {travel_info['departure_time']}"
+            if travel_sentence:
+                detail_sentences.append(f"{travel_sentence}.")
 
         if parsed_event.get("organizer"):
-            detail_sentences.append(f"Organized by {parsed_event['organizer']}")
+            detail_sentences.append(f"organized by {parsed_event['organizer']}.")
 
         if detail_sentences:
-            parts.append(" ".join(f"{sentence}." for sentence in detail_sentences))
+            parts.append(" ".join(detail_sentences))
 
         if parsed_event.get("meeting_link"):
             parts.append(f"Meeting link: {parsed_event['meeting_link']}")
@@ -251,7 +256,7 @@ class CalendarManager:
             "driving": "drive",
             "walking": "walk",
             "bicycling": "bike ride",
-            "transit": "transit ride",
+            "transit": "commute",
         }.get(travel_mode, "trip")
 
     @staticmethod

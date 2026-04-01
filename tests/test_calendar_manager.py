@@ -150,7 +150,7 @@ def test_build_description_formats_travel_sentence_for_selected_travel_type(monk
         },
     )
 
-    assert description == "3 min drive from Campus Circle Urbana. Leave by: 9:42 PM. Organized by Aryan Gupta."
+    assert description == "3 min drive from Campus Circle Urbana, leave by: 9:42 PM. organized by Aryan Gupta."
 
 
 def test_build_description_uses_walk_phrase_when_travel_type_is_walking(monkeypatch):
@@ -170,4 +170,24 @@ def test_build_description_uses_walk_phrase_when_travel_type_is_walking(monkeypa
         },
     )
 
-    assert description == "18 min walk from Campus Circle Urbana. Leave by: 6:27 PM."
+    assert description == "18 min walk from Campus Circle Urbana, leave by: 6:27 PM."
+
+
+def test_build_description_uses_commute_phrase_for_transit(monkeypatch):
+    monkeypatch.setattr("calendar_manager.Config.travel_mode", "transit")
+
+    description = CalendarManager._build_description(
+        {
+            "description": "",
+            "meeting_link": None,
+            "organizer": "Aryan Gupta",
+        },
+        {
+            "travel_minutes": 11,
+            "travel_text": "11 mins",
+            "origin": "Campus Circle Urbana",
+            "departure_time": "8:34 PM",
+        },
+    )
+
+    assert description == "11 min commute from Campus Circle Urbana, leave by: 8:34 PM. organized by Aryan Gupta."

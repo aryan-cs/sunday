@@ -1,58 +1,75 @@
-# Smart Calendar Pipeline
+# Sunday
 
-Turn Gmail into a travel-aware calendar assistant.
+Sunday is a Gmail-to-calendar assistant that watches new emails, turns them into structured events, figures out travel and timing, writes those events to Google Calendar, and sends you reminder texts.
 
-This project:
-- watches unread Gmail messages
-- parses them with a real LLM into structured event/action data
-- creates Google Calendar events
-- computes travel-aware reminders with Google Maps
-- sends summaries through Telegram or iMessage
+It is intentionally strict in production:
+- it only processes emails that arrive after the worker starts
+- it fails visibly instead of inventing fake data
+- it writes Sunday-managed events into one configurable calendar while still reading your other calendars for context
+
+## Table of Contents
+
+1. [How It Works](#how-it-works)
+2. [What You Need](#what-you-need)
+3. [Setup From Scratch](#setup-from-scratch)
+4. [Configuration Guide](#configuration-guide)
+5. [Running Sunday](#running-sunday)
+6. [How Travel and Calendar Writing Work](#how-travel-and-calendar-writing-work)
+7. [Optional API and Deployment](#optional-api-and-deployment)
+8. [Troubleshooting](#troubleshooting)
+9. [Development](#development)
+10. [To-Do](#to-do)
+
+## How It Works
+
+At a high level, Sunday does this:
+
+1. Poll Gmail for brand-new incoming messages.
+2. Parse each email with an LLM into structured event and action data.
+3. Infer missing details when reasonable, like event title, likely duration, and cleaner capitalization.
+4. Resolve vague venues into real places when possible, then estimate travel time with Google Maps.
+5. Decide where you are most likely leaving from using calendar context plus your configured home and work locations.
+6. Create or deduplicate a Google Calendar event.
+7. Send you a casual text summary right away.
+8. Send a separate leave-now text when it is actually time to head out.
 
 Important behavior:
-- the app ignores unread emails that were already sitting in the inbox when it starts
-- it only processes emails that arrive after the watcher is already running
+- Sunday ignores the unread backlog that already existed when it started.
+- Sunday only processes emails that arrive after startup.
+- Sunday writes its own managed events into one target calendar, but it still reads your other calendars for context and travel inference.
 
-The production path is strict by design. If parsing, messaging, or travel estimation fails, the app fails visibly instead of inventing fallback data.
+Core flow:
+
+```text
+new Gmail email
+  -> LLM parsing
+  -> event inference + cleanup
+  -> venue resolution + travel estimate
+  -> Google Calendar event creation
+  -> summary text
+  -> leave-now text later
+```
 
 ## What You Need
 
-Before you start, make sure you have:
+Before setup, make sure you have:
+
 - Python 3.10+
 - [`uv`](https://docs.astral.sh/uv/)
-- A Google account for Gmail and Calendar
-- One LLM provider key
-  - easiest: Gemini
-- A Google Maps API key if you want in-person travel reminders
-- One messaging output
-  - Telegram is easiest
+- A Google account
+- One LLM API key
+- One messaging channel
+  - Telegram is the easiest
   - iMessage works on macOS only
+- A Google Cloud project with:
+  - Gmail API
+  - Google Calendar API
+  - Distance Matrix API
+  - Geocoding API
+  - Places API
+- A Google Maps API key
 
-## Project Layout
-
-Everything now lives in the repository root:
-
-```text
-.
-├── README.md
-├── PLAN.md
-├── config.env.example
-├── pyproject.toml
-├── main.py
-├── server.py
-├── config.py
-├── gmail_watcher.py
-├── email_parser.py
-├── llm_client.py
-├── calendar_manager.py
-├── travel_estimator.py
-├── messenger.py
-├── pipeline.py
-├── tests/
-└── ...
-```
-
-## Setup From Zero
+## Setup From Scratch
 
 ### 1. Clone the repo
 
@@ -73,168 +90,140 @@ uv sync
 cp config.env.example config.env
 ```
 
-Then open `config.env` and fill in the values you actually need.
-
-Minimum working local setup:
-- `ACTIVE_LLM_PROVIDER`
-- one matching LLM API key
-- `GOOGLE_CREDENTIALS_FILE`
-- `GOOGLE_MAPS_API_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- `DEFAULT_HOME_LOCATION`
-
-Optional but recommended if you want smarter weekday travel inference:
-- `DEFAULT_WORK_LOCATION`
-- `WORK_DAYS`
-- `WORKDAY_START_TIME`
-- `WORKDAY_END_TIME`
-- `TARGET_CALENDAR_ID` if you want Sunday to write into a dedicated Google Calendar instead of `primary`
-
-Recommended local defaults for Gemini or another free-tier provider:
-- `MAX_EMAILS_PER_CYCLE=3`
-- `LLM_RETRY_ATTEMPTS=4`
-- `LLM_RETRY_BASE_SECONDS=5`
-
-Those settings help avoid blowing through rate limits on first startup when you already have unread mail in your inbox.
-
-If you use iMessage instead of Telegram:
-- set `IMESSAGE_ENABLED=true`
-- set `IMESSAGE_RECIPIENT`
-- leave Telegram fields blank if you want
-
-## Google Setup
+You will fill this in over the next few sections.
 
 ### 4. Create a Google Cloud project
 
-Everything in this section is done in [Google Cloud Console](https://console.cloud.google.com/).
+Go to [Google Cloud Console](https://console.cloud.google.com/) and create a new project for Sunday.
 
-#### 4.1 Create the project
+Use that same project for every Google-related step below.
 
-1. Create a new Google Cloud project for this app.
-2. Make sure you stay in that same project for every step below.
+### 5. Configure Google OAuth for Gmail and Calendar
 
-#### 4.2 Configure the OAuth consent screen
+Sunday uses OAuth for Gmail and Calendar access. This is separate from the Maps API key.
 
-This app reads Gmail, marks processed Gmail messages, and writes to Google Calendar, so you need a real OAuth app, not just an API key.
+#### 5.1 Configure the consent screen
 
-1. Go to `Google Auth Platform`.
+In Google Cloud:
+
+1. Open `Google Auth Platform`.
    If your console still shows the older layout, use `APIs & Services -> OAuth consent screen`.
-2. Create the app configuration if Google asks you to.
-3. Fill in the basics:
-   - app name: anything you want, like `Sunday`
-   - support email: your Google account
-   - developer contact email: your Google account
-4. Choose `External` audience.
-5. Leave the app in `Testing` while you are developing locally.
+2. Create the app configuration if prompted.
+3. Set:
+   - app name: `Sunday` or whatever you want
+   - support email: your email
+   - developer contact email: your email
+4. Choose `External`.
+5. Leave the app in `Testing`.
 6. Add your own Google account under `Test users`.
 
-If you skip the test-user step, Google OAuth will fail with an `access_denied` or "app has not completed the Google verification process" screen.
+If you skip the test-user step, OAuth will fail with an `access_denied` or “app has not completed the Google verification process” error.
 
-#### 4.3 Enable the Google Workspace APIs this app uses
+#### 5.2 Enable the Workspace APIs
 
-Go to `APIs & Services -> Library` and enable:
+In `APIs & Services -> Library`, enable:
+
 - `Gmail API`
 - `Google Calendar API`
 
-This app requests these OAuth scopes when you sign in:
+Sunday requests these scopes:
+
 - `https://www.googleapis.com/auth/gmail.readonly`
 - `https://www.googleapis.com/auth/gmail.modify`
 - `https://www.googleapis.com/auth/calendar`
 
-#### 4.4 Create the Desktop OAuth client
+#### 5.3 Create the OAuth client
 
-1. Go to `APIs & Services -> Credentials`.
-2. Click `Create Credentials -> OAuth client ID`.
-3. Application type: `Desktop app`
-4. Name it anything you want.
-5. Download the JSON file.
-6. Save that file in the repo root as `credentials.json`.
+1. Go to `APIs & Services -> Credentials`
+2. Click `Create Credentials -> OAuth client ID`
+3. Choose `Desktop app`
+4. Download the JSON file
+5. Save it in the repo root as `credentials.json`
 
-That filename must match `GOOGLE_CREDENTIALS_FILE` in `config.env`.
+That filename must match:
 
-Important:
-- use a `Desktop app` client, not `Web application`
-- if you create a new OAuth client later, replace `credentials.json`
-- if OAuth starts behaving strangely after rotating credentials, delete `token.json` and sign in again
+```env
+GOOGLE_CREDENTIALS_FILE=credentials.json
+```
 
-### 5. Get a Google Maps key
+Notes:
+- Use `Desktop app`, not `Web application`.
+- If you rotate OAuth credentials, replace `credentials.json`.
+- If Google auth gets into a weird state later, deleting `token.json` and re-running usually resets it cleanly.
 
-The app uses Google Maps separately from Gmail and Calendar. It needs this for travel time and exact address lookups.
+### 6. Enable Google Maps APIs and create the Maps key
 
-#### 5.1 Turn on billing for the project
+Sunday uses Maps for travel estimates, address resolution, and better matching of vague business names.
 
-Google Maps Platform APIs require billing on the project. If billing is missing, the API key may exist but requests can still fail.
+#### 6.1 Enable billing
 
-#### 5.2 Enable the Maps APIs this app uses
+Google Maps Platform requires billing on the project.
 
-Go to `APIs & Services -> Library` and enable:
+#### 6.2 Enable the Maps APIs Sunday uses
+
+In `APIs & Services -> Library`, enable:
+
 - `Distance Matrix API`
 - `Geocoding API`
 - `Places API`
 
-#### 5.3 Create the API key
+#### 6.3 Create the Maps API key
 
-1. Go to `APIs & Services -> Credentials`.
-2. Click `Create Credentials -> API key`.
-3. Copy the key into `GOOGLE_MAPS_API_KEY` in `config.env`.
+1. Go to `APIs & Services -> Credentials`
+2. Click `Create Credentials -> API key`
+3. Copy the key into:
 
-#### 5.4 Set key restrictions correctly
+```env
+GOOGLE_MAPS_API_KEY=your_key_here
+```
+
+#### 6.4 Set restrictions correctly
 
 Open that API key and configure:
 
 1. `API restrictions`
-   - restrict the key to:
+   - allow:
      - `Distance Matrix API`
      - `Geocoding API`
      - `Places API`
 2. `Application restrictions`
-   - for local development, `None` is the easiest way to confirm the key works
-   - for a real server deployment, use a server-safe restriction like `IP addresses`
+   - local development: `None` is easiest while testing
+   - real backend deployment: use something server-safe like `IP addresses`
    - do not use `HTTP referrers`, `Android`, or `iOS` restrictions for this backend key
 
-If travel time works but venue lookup or address lookup fails with `REQUEST_DENIED`, the most common cause is that the key is allowed to call `Distance Matrix API` but not `Geocoding API` and `Places API`.
+If travel time works but address or venue lookup fails with `REQUEST_DENIED`, the usual issue is that only some of the Maps APIs were allowed on the key.
 
-Without this key, in-person travel reminders, exact address lookups, and robust business-name matching will fail instead of guessing fake travel times or addresses.
+### 7. Set up your LLM provider
 
-## LLM Setup
+Sunday supports multiple providers, but you only need one.
 
-### 6. Pick an LLM provider
+Supported providers:
 
-Recommended easiest path:
 - Gemini
-
-Steps:
-1. Go to [Google AI Studio](https://aistudio.google.com/apikey).
-2. Create an API key.
-3. Set:
-   - `ACTIVE_LLM_PROVIDER=gemini`
-   - `GEMINI_API_KEY=...`
-
-Other providers are supported too:
+- Cerebras
 - OpenRouter
 - Groq
-- Cerebras
 - Ollama
 - Together
 - Mistral
 - Hugging Face
 - Custom OpenAI-compatible endpoint
 
-Only configure the provider you actually plan to use.
+#### Easiest option: Gemini
 
-### Cerebras setup
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
+2. Create an API key
+3. Put it in `config.env`:
 
-If Gemini is rate-limiting you, Cerebras is a good fast fallback for this app.
+```env
+ACTIVE_LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-2.0-flash
+```
 
-1. Create an API key in Cerebras Cloud.
-2. In `config.env`, set:
-   - `ACTIVE_LLM_PROVIDER=cerebras`
-   - `CEREBRAS_API_KEY=...`
-   - `CEREBRAS_MODEL=llama3.1-8b`
-3. If you are on the free tier, optionally set `LLM_REQUESTS_PER_MINUTE=25` to stay a bit under Cerebras's published 30 RPM free-tier limit.
+#### Common fallback: Cerebras
 
-Example:
+If Gemini is rate-limiting you, Cerebras is a good alternative.
 
 ```env
 ACTIVE_LLM_PROVIDER=cerebras
@@ -243,124 +232,220 @@ CEREBRAS_MODEL=llama3.1-8b
 LLM_REQUESTS_PER_MINUTE=25
 ```
 
-The app talks to Cerebras through its OpenAI-compatible `/v1/chat/completions` API, so no extra code or SDK install is needed once those env vars are set.
+### 8. Set up messaging
 
-## Messaging Setup
+Sunday needs one real outbound messaging channel.
 
-### 7. Set up Telegram
+#### Option A: Telegram
 
 This is the easiest production-friendly option.
 
-1. Open Telegram.
-2. Message [@BotFather](https://t.me/BotFather).
-3. Create a bot with `/newbot`.
-4. Copy the bot token into `TELEGRAM_BOT_TOKEN`.
-5. Send your bot a message once.
+1. Open Telegram
+2. Message [@BotFather](https://t.me/BotFather)
+3. Run `/newbot`
+4. Copy the bot token into:
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+```
+
+5. Send your bot a message once
 6. Visit:
 
 ```text
 https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 ```
 
-7. Find your `chat.id`.
-8. Put that value into `TELEGRAM_CHAT_ID`.
+7. Find your `chat.id`
+8. Put it in:
 
-The pipeline now has a real delivery channel.
+```env
+TELEGRAM_CHAT_ID=your_chat_id
+```
 
-### 8. Optional: use iMessage instead
+#### Option B: iMessage
 
-iMessage only works on macOS and uses AppleScript.
-
-What `IMESSAGE_RECIPIENT` should be:
-- the exact phone number or email address you would type into the "To:" field in the Messages app
-- usually one of these:
-  - your own iPhone number, like `+12175551234`
-  - your Apple ID/iMessage email, like `name@icloud.com`
-  - another person's iMessage-enabled phone number or Apple ID email
-
-Examples:
-- `IMESSAGE_RECIPIENT=+12175551234`
-- `IMESSAGE_RECIPIENT=name@icloud.com`
-
-If you want the bot to message you, use your own iMessage-reachable address.
-
-How to find the correct value:
-1. Open the `Messages` app on your Mac.
-2. Start a new message.
-3. In the `To:` field, type the address you normally use to message yourself or the target person.
-4. Use that exact value in `IMESSAGE_RECIPIENT`.
-
-If you are not sure whether to use your phone number or email:
-1. On your iPhone, open `Settings -> Apps -> Messages -> Send & Receive`.
-2. Look under `You Can Receive iMessages To And Reply From`.
-3. Use one of those checked phone numbers or email addresses.
-
-Prerequisites for iMessage to work:
-- you must be on macOS
-- you must be signed into the `Messages` app
-- iMessage must already work manually from that Mac
+iMessage works only on macOS and uses AppleScript.
 
 Set:
-- `IMESSAGE_ENABLED=true`
-- `IMESSAGE_RECIPIENT=<phone number or email from above>`
-- `TEXT_EMAIL_LINKS=true` if you want the original Gmail thread link sent as a follow-up text
 
-If iMessage is enabled but not correctly configured, delivery fails visibly.
+```env
+IMESSAGE_ENABLED=true
+IMESSAGE_RECIPIENT=+12175551234
+TEXT_EMAIL_LINKS=true
+```
 
-Quick test:
-1. Open `Messages` on your Mac and manually send a message to the same phone number or email.
-2. If that works, use the same value in `IMESSAGE_RECIPIENT`.
-3. If manual sending does not work, the app will not work either.
+`IMESSAGE_RECIPIENT` should be the exact phone number or email address you would manually type into the Messages app.
 
-## First Run
+Examples:
+- `+12175551234`
+- `name@icloud.com`
 
-### 9. Start the app locally
+To find the right value:
+
+1. Open `Messages` on your Mac
+2. Start a new message
+3. In the `To:` field, type the address you normally use
+4. Use that exact value in `IMESSAGE_RECIPIENT`
+
+If you are unsure whether your phone number or email is iMessage-enabled:
+
+1. On iPhone, open `Settings -> Apps -> Messages -> Send & Receive`
+2. Look under `You Can Receive iMessages To And Reply From`
+3. Use one of those checked values
+
+### 9. Fill in `config.env`
+
+At minimum, a practical local config usually needs:
+
+```env
+ACTIVE_LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-2.0-flash
+
+GOOGLE_CREDENTIALS_FILE=credentials.json
+GOOGLE_TOKEN_FILE=token.json
+GOOGLE_MAPS_API_KEY=your_maps_key_here
+TARGET_CALENDAR_ID=primary
+
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+
+DEFAULT_HOME_LOCATION=Champaign, IL
+DEFAULT_HOME_LATITUDE=40.1164
+DEFAULT_HOME_LONGITUDE=-88.2434
+DEFAULT_WORK_LOCATION=
+DEFAULT_WORK_LATITUDE=
+DEFAULT_WORK_LONGITUDE=
+WORK_DAYS=mon,tue,wed,thu,fri
+WORKDAY_START_TIME=09:00
+WORKDAY_END_TIME=17:00
+
+PREP_TIME_MINUTES=15
+ONLINE_PREP_MINUTES=5
+TRAVEL_TYPE=driving
+POLL_INTERVAL_SECONDS=10
+MAX_EMAILS_PER_CYCLE=3
+LLM_RETRY_ATTEMPTS=4
+LLM_RETRY_BASE_SECONDS=5
+TIMEZONE=America/Chicago
+LOG_LEVEL=INFO
+```
+
+## Configuration Guide
+
+This is what the most important settings do.
+
+### Core Google settings
+
+- `GOOGLE_CREDENTIALS_FILE`
+  - local OAuth client JSON file
+- `GOOGLE_TOKEN_FILE`
+  - stored OAuth token after first successful login
+- `GOOGLE_MAPS_API_KEY`
+  - used for travel estimates, address resolution, and venue matching
+- `TARGET_CALENDAR_ID`
+  - where Sunday writes Sunday-managed events
+  - default: `primary`
+
+### Calendar behavior
+
+- Sunday still reads across your visible calendars for context.
+- `TARGET_CALENDAR_ID` changes only where Sunday writes and deduplicates its own events.
+
+If you want a dedicated calendar:
+
+1. Create a Google Calendar named something like `Sunday`
+2. Copy its calendar ID from Google Calendar settings
+3. Put that value into:
+
+```env
+TARGET_CALENDAR_ID=your_calendar_id_here
+```
+
+### Travel and location settings
+
+- `DEFAULT_HOME_LOCATION`
+- `DEFAULT_HOME_LATITUDE`
+- `DEFAULT_HOME_LONGITUDE`
+- `DEFAULT_WORK_LOCATION`
+- `DEFAULT_WORK_LATITUDE`
+- `DEFAULT_WORK_LONGITUDE`
+- `WORK_DAYS`
+- `WORKDAY_START_TIME`
+- `WORKDAY_END_TIME`
+- `TRAVEL_TYPE`
+
+Allowed `TRAVEL_TYPE` values:
+- `driving`
+- `walking`
+- `bicycling`
+- `transit`
+
+### Messaging settings
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `IMESSAGE_ENABLED`
+- `IMESSAGE_RECIPIENT`
+- `TEXT_EMAIL_LINKS`
+
+### LLM tuning settings
+
+- `MAX_EMAILS_PER_CYCLE`
+- `LLM_REQUESTS_PER_MINUTE`
+- `LLM_RETRY_ATTEMPTS`
+- `LLM_RETRY_BASE_SECONDS`
+
+Good conservative defaults:
+
+```env
+MAX_EMAILS_PER_CYCLE=3
+LLM_RETRY_ATTEMPTS=4
+LLM_RETRY_BASE_SECONDS=5
+```
+
+## Running Sunday
+
+### 1. Start the worker
 
 ```bash
 uv run python main.py
 ```
 
 On first run:
+
 - a browser window should open
-- Google OAuth consent should appear
-- after you approve it, `token.json` will be created in the repo root
+- Google OAuth should appear
+- after approval, `token.json` will be created in the repo root
 
-That token is used for Gmail and Calendar access.
+### 2. Send a real test email
 
-### 10. Send yourself a real test email
+Send yourself a fresh email after the worker is already running.
 
-Use something obvious, for example:
-- a meeting with a date and time
-- a Zoom/Meet link
-- a real physical address
-
-Then watch the logs.
+Good test examples:
+- `Meet me at the Illini Union today at 3:00 PM`
+- `Dinner at Chili's tonight at 9`
+- `Zoom tomorrow at 10 AM: https://...`
 
 Expected flow:
-1. unread Gmail message is fetched
-2. LLM parses it into structured JSON
-3. Calendar event is created if details are complete enough
-4. Telegram or iMessage summary is delivered
-5. the Gmail message is marked processed only after delivery succeeds
 
-The default polling interval is now `10` seconds, so new test emails should usually be picked up quickly.
+1. Sunday sees the new Gmail message
+2. the LLM parses it into structured data
+3. Sunday infers missing pieces when reasonable
+4. Google Calendar event gets created
+5. you get a casual summary message
+6. later, you get a separate leave-now message if applicable
 
-If you start the app with 500 unread emails already in your inbox, it will not try to process that whole backlog.
+### Useful commands
 
-## Useful Commands
-
-Run the local polling worker:
+Run the worker:
 
 ```bash
 uv run python main.py
 ```
 
-If you hit LLM `429 Too Many Requests` errors:
-- wait a minute and rerun
-- keep `MAX_EMAILS_PER_CYCLE` low, such as `1` to `3`
-- or switch to another provider in `config.env`
-
-Run the API server:
+Run the FastAPI server:
 
 ```bash
 uv run uvicorn server:app --reload --port 8000
@@ -372,149 +457,152 @@ Run tests:
 uv run pytest
 ```
 
-## Optional API Endpoints
-
-If you run the FastAPI server, you get:
-- `GET /health`
-- `GET /api/status`
-- `POST /api/process`
-- `POST /api/plan-day`
-
-### Travel Origin Inference
-
-Travel time is inferred without live phone location.
-
-For in-person events, the app chooses the most likely departure point in this order:
-1. the latest scheduled calendar event location before the new event
-2. otherwise `DEFAULT_WORK_LOCATION` during configured work hours
-3. otherwise `DEFAULT_HOME_LOCATION`
-
-To enable work-aware travel inference, set these in `config.env`:
-- `DEFAULT_WORK_LOCATION`
-- `DEFAULT_WORK_LATITUDE`
-- `DEFAULT_WORK_LONGITUDE`
-- `WORK_DAYS`
-- `WORKDAY_START_TIME`
-- `WORKDAY_END_TIME`
-
-Example:
-
-```env
-DEFAULT_HOME_LOCATION=Champaign, IL
-DEFAULT_WORK_LOCATION=Siebel Center for Computer Science, Urbana, IL
-WORK_DAYS=mon,tue,wed,thu,fri
-WORKDAY_START_TIME=09:00
-WORKDAY_END_TIME=17:00
-```
-
-### Sunday Write Calendar
-
-By default, Sunday writes managed events into your primary Google Calendar.
-
-If you want Sunday-created events to live in a dedicated calendar instead:
-1. Create a Google Calendar such as `Sunday`
-2. Copy its calendar ID from Google Calendar settings
-3. Set `TARGET_CALENDAR_ID` in `config.env`
-
-Example:
-
-```env
-TARGET_CALENDAR_ID=primary
-```
-
-Important note:
-- Sunday still reads across your visible calendars for context, conflict detection, and travel-origin inference
-- `TARGET_CALENDAR_ID` only changes where Sunday writes and deduplicates its own managed events
-
-## Optional Vercel Deployment
-
-You can deploy the API server to Vercel for cron-driven processing.
-
-### 11. Prepare Google auth for Vercel
-
-Vercel cannot run the local browser OAuth flow.
-
-Run locally first so `token.json` exists, then encode both files:
-
-```bash
-python -c "import base64; print(base64.b64encode(open('token.json','rb').read()).decode())"
-python -c "import base64; print(base64.b64encode(open('credentials.json','rb').read()).decode())"
-```
-
-In Vercel environment variables, set:
-- `GOOGLE_TOKEN_JSON`
-- `GOOGLE_CREDENTIALS_JSON`
-- your LLM key
-- your Telegram or iMessage settings
-- `DEFAULT_HOME_LOCATION`
-- `DEFAULT_WORK_LOCATION` if you want work-aware travel origins
-- `TARGET_CALENDAR_ID` if Sunday should write to a non-primary calendar
-- `GOOGLE_MAPS_API_KEY`
-- `CRON_SECRET`
-
-### 12. Deploy
-
-```bash
-vercel deploy --prod
-```
-
-`vercel.json` is already in the repo root.
-
-Important note:
-- the core cron pipeline works fine on Vercel
-
-## Troubleshooting
-
-### The app says config is invalid
-
-Check:
-- `config.env` exists in the repo root
-- your chosen LLM key is set
-- `credentials.json` exists
-- Telegram or iMessage is configured
-
-### In-person events are failing
-
-Check:
-- `GOOGLE_MAPS_API_KEY` is set
-- Distance Matrix API is enabled
-- the parsed event has a real location
-
-### Gmail/Calendar auth is failing
-
-Check:
-- `credentials.json` is a Desktop OAuth client
-- you completed the browser OAuth flow
-- `token.json` exists
-
-If needed, delete `token.json` and rerun:
+Reset Google OAuth locally:
 
 ```bash
 rm -f token.json
 uv run python main.py
 ```
 
-### No messages are being sent
+## How Travel and Calendar Writing Work
+
+### Travel origin inference
+
+For in-person events, Sunday chooses the most likely departure point in this order:
+
+1. the latest scheduled calendar event location before the new event
+2. otherwise `DEFAULT_WORK_LOCATION` during configured work hours
+3. otherwise `DEFAULT_HOME_LOCATION`
+
+### Write calendar behavior
+
+Sunday writes its managed events only to `TARGET_CALENDAR_ID`.
+
+It still reads across your other calendars for:
+- context
+- conflict detection
+- travel-origin inference
+- leave alerts
+
+### Reminder behavior
+
+Sunday sends two kinds of outbound messages:
+
+- an immediate summary when the email is processed
+- a separate leave-now alert when it is actually time to go
+
+For casual events like lunch or dinner, Sunday avoids overly aggressive day-before reminders.
+
+## Optional API and Deployment
+
+### FastAPI endpoints
+
+If you run the server, you get:
+
+- `GET /health`
+- `GET /api/status`
+- `POST /api/process`
+- `POST /api/plan-day`
+
+### Optional Vercel deployment
+
+If you want to deploy the API server to Vercel:
+
+1. run locally first so `token.json` exists
+2. base64-encode both auth files:
+
+```bash
+python -c "import base64; print(base64.b64encode(open('token.json','rb').read()).decode())"
+python -c "import base64; print(base64.b64encode(open('credentials.json','rb').read()).decode())"
+```
+
+3. Set these Vercel environment variables:
+
+- `GOOGLE_TOKEN_JSON`
+- `GOOGLE_CREDENTIALS_JSON`
+- your LLM key
+- your Telegram or iMessage settings
+- `DEFAULT_HOME_LOCATION`
+- `DEFAULT_WORK_LOCATION`
+- `TARGET_CALENDAR_ID`
+- `GOOGLE_MAPS_API_KEY`
+- `CRON_SECRET`
+
+Deploy:
+
+```bash
+vercel deploy --prod
+```
+
+`vercel.json` already lives in the repo root.
+
+## Troubleshooting
+
+### Google OAuth is blocked
 
 Check:
-- Telegram bot token is valid
-- Telegram chat ID is correct
-- or iMessage is enabled on macOS with a valid recipient
 
-There is no stdout delivery fallback anymore.
+- your app is in `Testing`
+- your Google account is added under `Test users`
+- `credentials.json` is a `Desktop app` OAuth client
 
-## Development Notes
+### Travel says `REQUEST_DENIED`
 
-- Secrets stay local in `config.env`, `credentials.json`, and `token.json`
-- local runtime state goes in `.state/`
+Check:
+
+- billing is enabled on the Google Cloud project
+- `GOOGLE_MAPS_API_KEY` is set
+- `Distance Matrix API`, `Geocoding API`, and `Places API` are all enabled
+- your Maps key restrictions allow those APIs
+
+### Sunday is not sending any texts
+
+Check:
+
+- Telegram bot token is valid and `TELEGRAM_CHAT_ID` is correct
+- or iMessage is properly working from the same Mac
+- `IMESSAGE_RECIPIENT` is exactly the address you can manually message
+
+### Sunday is creating events in the wrong calendar
+
+Check:
+
+- `TARGET_CALENDAR_ID` in `config.env`
+- that the calendar ID is the real Google Calendar ID, not just the display name
+
+### In-person venue matching is bad
+
+Check:
+
+- `Places API` is enabled
+- `Geocoding API` is enabled
+- your home/work locations are configured correctly
+
+### The app does nothing on old unread emails
+
+That is expected.
+
+Sunday intentionally ignores the unread backlog that already existed before startup.
+
+## Development
+
+Project notes:
+
+- secrets stay local in `config.env`, `credentials.json`, and `token.json`
+- runtime state goes in `.state/`
 - tests live in `tests/`
-- the project is meant to be run from the repo root
+- the repo is intended to be run from the project root
 
-## Verification
-
-Before pushing changes:
+Recommended verification before pushing:
 
 ```bash
 uv run pytest
-uv run python -m compileall .
+uv run python -m py_compile $(rg --files -g '*.py')
 ```
+
+## To-Do
+
+- [ ] Emoji-first message formatting so reminders can use icons instead of labels like `location`, `time`, and `leave by`
+- [ ] Optional phone-location ping support that feels invisible and production-safe
+- [ ] Better reply-based workflows so a future version could react to user responses, not just send outbound reminders
+- [ ] Richer calendar repair/update tools for old Sunday-managed events after formatting or reminder-policy changes

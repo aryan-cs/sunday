@@ -22,19 +22,41 @@ class _FakeEvents:
 
     def list(self, **kwargs):
         self.list_calls.append(kwargs)
-        return _FakeRequest(self.list_payload)
+        if callable(self.list_payload):
+            payload = self.list_payload(kwargs)
+        elif isinstance(self.list_payload, dict) and (
+            "items" in self.list_payload or "nextPageToken" in self.list_payload
+        ):
+            payload = self.list_payload
+        else:
+            payload = self.list_payload.get(kwargs.get("calendarId"), {"items": []})
+        return _FakeRequest(payload)
 
     def insert(self, **kwargs):
         self.insert_calls.append(kwargs)
         return _FakeRequest(self.insert_payload)
 
 
+class _FakeCalendarList:
+    def __init__(self, payload=None):
+        self.payload = payload or {"items": []}
+        self.list_calls = []
+
+    def list(self, **kwargs):
+        self.list_calls.append(kwargs)
+        return _FakeRequest(self.payload)
+
+
 class _FakeService:
-    def __init__(self, events):
+    def __init__(self, events, calendar_list=None):
         self._events = events
+        self._calendar_list = calendar_list or _FakeCalendarList()
 
     def events(self):
         return self._events
+
+    def calendarList(self):
+        return self._calendar_list
 
 
 def test_calendar_manager_returns_existing_event_without_inserting(monkeypatch):
@@ -42,6 +64,7 @@ def test_calendar_manager_returns_existing_event_without_inserting(monkeypatch):
     manager = object.__new__(CalendarManager)
     manager.service = _FakeService(events)
     monkeypatch.setattr("calendar_manager.Config.timezone", "America/Chicago")
+    monkeypatch.setattr("calendar_manager.Config.target_calendar_id", "sunday@group.calendar.google.com")
 
     result = manager.create_smart_event(
         {
@@ -57,6 +80,7 @@ def test_calendar_manager_returns_existing_event_without_inserting(monkeypatch):
 
     assert result["status"] == "existing"
     assert events.insert_calls == []
+    assert events.list_calls[0]["calendarId"] == "sunday@group.calendar.google.com"
 
 
 def test_calendar_manager_sets_extended_property_on_insert(monkeypatch):
@@ -64,6 +88,7 @@ def test_calendar_manager_sets_extended_property_on_insert(monkeypatch):
     manager = object.__new__(CalendarManager)
     manager.service = _FakeService(events)
     monkeypatch.setattr("calendar_manager.Config.timezone", "America/Chicago")
+    monkeypatch.setattr("calendar_manager.Config.target_calendar_id", "sunday@group.calendar.google.com")
 
     result = manager.create_smart_event(
         {
@@ -97,6 +122,56 @@ def test_calendar_manager_sets_extended_property_on_insert(monkeypatch):
         == "Office (201 N Goodwin Ave, Urbana, IL 61801)"
     )
     assert "attendees" not in events.insert_calls[0]["body"]
+    assert events.insert_calls[0]["calendarId"] == "sunday@group.calendar.google.com"
+
+
+def test_list_events_for_day_reads_across_all_calendars(monkeypatch):
+    events = _FakeEvents(
+        {
+            "primary": {
+                "items": [
+                    {
+                        "id": "primary-1",
+                        "summary": "Class",
+                        "start": {"dateTime": "2026-04-02T09:00:00-05:00"},
+                    }
+                ]
+            },
+            "sunday@group.calendar.google.com": {
+                "items": [
+                    {
+                        "id": "sunday-1",
+                        "summary": "Lunch",
+                        "start": {"dateTime": "2026-04-02T12:00:00-05:00"},
+                    }
+                ]
+            },
+        }
+    )
+    calendar_list = _FakeCalendarList(
+        {
+            "items": [
+                {"id": "primary"},
+                {"id": "sunday@group.calendar.google.com"},
+            ]
+        }
+    )
+    manager = object.__new__(CalendarManager)
+    manager.service = _FakeService(events, calendar_list)
+    monkeypatch.setattr("calendar_manager.Config.timezone", "America/Chicago")
+    monkeypatch.setattr("calendar_manager.Config.target_calendar_id", "sunday@group.calendar.google.com")
+
+    result = manager.list_events_for_day("2026-04-02")
+
+    assert [item["id"] for item in result] == ["primary-1", "sunday-1"]
+    assert {item["calendarId"] for item in result} == {
+        "primary",
+        "sunday@group.calendar.google.com",
+    }
+    assert {call["calendarId"] for call in events.list_calls} == {
+        "primary",
+        "sunday@group.calendar.google.com",
+    }
 
 
 def test_compute_smart_reminders_skips_day_before_for_casual_lunch(monkeypatch):

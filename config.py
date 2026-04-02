@@ -122,6 +122,7 @@ class Config:
     default_work_location: str = os.getenv("DEFAULT_WORK_LOCATION", "")
     default_work_lat: float | None = _get_optional_float("DEFAULT_WORK_LATITUDE")
     default_work_lng: float | None = _get_optional_float("DEFAULT_WORK_LONGITUDE")
+    target_calendar_id: str = os.getenv("TARGET_CALENDAR_ID", "primary").strip() or "primary"
     work_days: list[str] = _get_csv("WORK_DAYS", "mon,tue,wed,thu,fri")
     workday_start_time: str = os.getenv("WORKDAY_START_TIME", "09:00")
     workday_end_time: str = os.getenv("WORKDAY_END_TIME", "17:00")

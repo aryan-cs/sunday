@@ -89,6 +89,7 @@ Optional but recommended if you want smarter weekday travel inference:
 - `WORK_DAYS`
 - `WORKDAY_START_TIME`
 - `WORKDAY_END_TIME`
+- `TARGET_CALENDAR_ID` if you want Sunday to write into a dedicated Google Calendar instead of `primary`
 
 Recommended local defaults for Gemini or another free-tier provider:
 - `MAX_EMAILS_PER_CYCLE=3`
@@ -406,6 +407,25 @@ WORKDAY_START_TIME=09:00
 WORKDAY_END_TIME=17:00
 ```
 
+### Sunday Write Calendar
+
+By default, Sunday writes managed events into your primary Google Calendar.
+
+If you want Sunday-created events to live in a dedicated calendar instead:
+1. Create a Google Calendar such as `Sunday`
+2. Copy its calendar ID from Google Calendar settings
+3. Set `TARGET_CALENDAR_ID` in `config.env`
+
+Example:
+
+```env
+TARGET_CALENDAR_ID=primary
+```
+
+Important note:
+- Sunday still reads across your visible calendars for context, conflict detection, and travel-origin inference
+- `TARGET_CALENDAR_ID` only changes where Sunday writes and deduplicates its own managed events
+
 ## Optional Vercel Deployment
 
 You can deploy the API server to Vercel for cron-driven processing.
@@ -428,6 +448,7 @@ In Vercel environment variables, set:
 - your Telegram or iMessage settings
 - `DEFAULT_HOME_LOCATION`
 - `DEFAULT_WORK_LOCATION` if you want work-aware travel origins
+- `TARGET_CALENDAR_ID` if Sunday should write to a non-primary calendar
 - `GOOGLE_MAPS_API_KEY`
 - `CRON_SECRET`
 

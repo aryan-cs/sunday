@@ -106,7 +106,7 @@ class CalendarManager:
             created = (
                 self.service.events()
                 .insert(
-                    calendarId="primary",
+                    calendarId=Config.target_calendar_id,
                     body=event_body,
                     sendUpdates="none",
                 )
@@ -152,40 +152,28 @@ class CalendarManager:
         end_of_day = start_of_day + timedelta(days=1)
 
         try:
-            result = (
-                self.service.events()
-                .list(
-                    calendarId="primary",
-                    timeMin=start_of_day.isoformat(),
-                    timeMax=end_of_day.isoformat(),
-                    singleEvents=True,
-                    orderBy="startTime",
-                )
-                .execute()
+            items = self._list_events_across_calendars(
+                start_of_day,
+                end_of_day,
+                order_by="startTime",
             )
         except Exception as exc:
             raise CalendarEventError("Failed to list today's events.") from exc
 
-        return result.get("items", [])
+        return items
 
     def list_events_in_window(self, start_dt: datetime, end_dt: datetime) -> list[dict]:
         """Fetch calendar events in a specific local time window."""
         try:
-            result = (
-                self.service.events()
-                .list(
-                    calendarId="primary",
-                    timeMin=start_dt.isoformat(),
-                    timeMax=end_dt.isoformat(),
-                    singleEvents=True,
-                    orderBy="startTime",
-                )
-                .execute()
+            items = self._list_events_across_calendars(
+                start_dt,
+                end_dt,
+                order_by="startTime",
             )
         except Exception as exc:
             raise CalendarEventError("Failed to list calendar events in the requested window.") from exc
 
-        return result.get("items", [])
+        return items
 
     def _find_existing_event(
         self,
@@ -201,7 +189,7 @@ class CalendarManager:
             result = (
                 self.service.events()
                 .list(
-                    calendarId="primary",
+                    calendarId=Config.target_calendar_id,
                     privateExtendedProperty=f"{self.SOURCE_EMAIL_PROPERTY}={source_email_id}",
                     timeMin=window_start.isoformat(),
                     timeMax=window_end.isoformat(),
@@ -214,6 +202,73 @@ class CalendarManager:
 
         items = result.get("items", [])
         return items[0] if items else None
+
+    def _calendar_ids_for_reads(self) -> list[str]:
+        """Return calendar IDs that should be scanned for context and alerts."""
+        calendar_ids: list[str] = []
+        seen: set[str] = set()
+        page_token: str | None = None
+
+        while True:
+            kwargs = {"pageToken": page_token} if page_token else {}
+            result = self.service.calendarList().list(**kwargs).execute()
+
+            for item in result.get("items", []):
+                calendar_id = (item.get("id") or "").strip()
+                if not calendar_id or calendar_id in seen:
+                    continue
+                seen.add(calendar_id)
+                calendar_ids.append(calendar_id)
+
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+
+        target_calendar_id = Config.target_calendar_id.strip() or "primary"
+        if target_calendar_id not in seen:
+            calendar_ids.append(target_calendar_id)
+
+        return calendar_ids
+
+    @staticmethod
+    def _sort_event_items(items: list[dict]) -> list[dict]:
+        """Sort aggregated calendar events by start time."""
+        def sort_key(item: dict) -> tuple[str, str]:
+            start = item.get("start") or {}
+            return (
+                (start.get("dateTime") or start.get("date") or ""),
+                item.get("id") or "",
+            )
+
+        return sorted(items, key=sort_key)
+
+    def _list_events_across_calendars(
+        self,
+        start_dt: datetime,
+        end_dt: datetime,
+        order_by: str = "startTime",
+    ) -> list[dict]:
+        """Fetch events across all readable calendars and merge them."""
+        items: list[dict] = []
+
+        for calendar_id in self._calendar_ids_for_reads():
+            result = (
+                self.service.events()
+                .list(
+                    calendarId=calendar_id,
+                    timeMin=start_dt.isoformat(),
+                    timeMax=end_dt.isoformat(),
+                    singleEvents=True,
+                    orderBy=order_by,
+                )
+                .execute()
+            )
+            for item in result.get("items", []):
+                enriched = dict(item)
+                enriched.setdefault("calendarId", calendar_id)
+                items.append(enriched)
+
+        return self._sort_event_items(items)
 
     @staticmethod
     def _build_description(parsed_event: dict, travel_info: dict | None) -> str:

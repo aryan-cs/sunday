@@ -158,7 +158,7 @@ def _build_leave_alert_headline(calendar_event: dict) -> str:
 
 
 def _format_time_label(date_str: str | None, start_time: str | None) -> str | None:
-    """Return a friendly time label like '3:00 p.m.' or 'Apr 4 at 3:00 p.m.'."""
+    """Return a friendly time label like '3:00pm' or 'Apr 4 at 3:00pm'."""
     if not date_str or not start_time:
         return None
 
@@ -168,8 +168,8 @@ def _format_time_label(date_str: str | None, start_time: str | None) -> str | No
         return None
 
     today = datetime.now(ZoneInfo(Config.timezone)).date()
-    time_label = event_dt.strftime("%I:%M %p").lstrip("0").lower().replace("am", "a.m.").replace(
-        "pm", "p.m."
+    time_label = event_dt.strftime("%I:%M %p").lstrip("0").lower().replace(" am", "am").replace(
+        " pm", "pm"
     )
 
     if event_dt.date() == today:
@@ -188,8 +188,8 @@ def _format_leave_by_label(departure_time: str | None) -> str | None:
     except ValueError:
         return departure_time
 
-    return departure_dt.strftime("%I:%M %p").lstrip("0").lower().replace("am", "a.m.").replace(
-        "pm", "p.m."
+    return departure_dt.strftime("%I:%M %p").lstrip("0").lower().replace(" am", "am").replace(
+        " pm", "pm"
     )
 
 
@@ -278,44 +278,54 @@ def format_summary(
     lines: list[str] = []
 
     if parsed_email.get("has_event"):
-        lines.append(f"reminder: {_build_event_headline(parsed_email)}!")
+        lines.append(f"⏰ {_build_event_headline(parsed_email)}!")
+        lines.append("")
         event_location = _event_location_label(event)
         if event_location:
-            lines.append(f"location: {event_location}")
+            lines.append(f"📍 {event_location}")
 
         time_label = _format_time_label(event.get("date"), event.get("start_time"))
         if time_label:
-            lines.append(f"time: {time_label}")
+            lines.append(f"🕐 {time_label}")
 
         if event.get("is_online") and event.get("meeting_link"):
-            lines.append(f"join: {event['meeting_link']}")
+            lines.append(f"🔗 {event['meeting_link']}")
 
         leave_by = _format_leave_by_label((travel_info or {}).get("departure_time"))
         if leave_by:
-            lines.append(f"leave by: {leave_by}")
+            lines.append(f"🚗 leave by {leave_by}")
 
         if calendar_status == "skipped_incomplete":
-            lines.append("calendar: not added yet")
+            lines.append("📅 not added yet")
     else:
-        lines.append(f"update: {summary}")
+        lines.append(f"📬 {summary}")
+
+        has_detail = (
+            (parsed_email.get("urgency", "none") not in ("", "none"))
+            or parsed_email.get("needs_response")
+            or parsed_email.get("action_items")
+            or parsed_email.get("can_wait")
+        )
+        if has_detail:
+            lines.append("")
 
         urgency = parsed_email.get("urgency", "none")
         if urgency and urgency != "none":
-            lines.append(f"urgency: {urgency}")
+            lines.append(f"⚠️ {urgency}")
 
         if parsed_email.get("needs_response"):
-            lines.append("needs a reply")
+            lines.append("💬 needs a reply")
 
         for item in parsed_email.get("action_items", []):
-            lines.append(f"to do: {item}")
+            lines.append(f"✅ {item}")
 
         if parsed_email.get("can_wait"):
-            lines.append("this can wait")
+            lines.append("😌 this can wait")
 
     if notes:
         lines.append("")
         for note in notes:
-            lines.append(f"note: {note}")
+            lines.append(f"ℹ️ {note}")
 
     return "\n".join(lines)
 
@@ -325,7 +335,7 @@ def format_leave_alert(calendar_event: dict) -> str:
     lines = [f"‼️ hey, it's time to leave for {_build_leave_alert_headline(calendar_event)}!"]
     location = _calendar_event_location_label(calendar_event)
     if location:
-        lines.append(f"location: {location}")
+        lines.append(f"📍 {location}")
     return "\n".join(lines)
 
 

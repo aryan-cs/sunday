@@ -25,10 +25,10 @@ def test_format_summary_for_event_is_informal_without_inline_email_link(monkeypa
         source_email_link="https://mail.google.com/mail/u/0/#all/thread-123",
     )
 
-    assert "reminder: lunch meeting w/ aryan at illini union!" in message
-    assert "location: Illini Union (1401 W Green St, Urbana, IL 61801)" in message
-    assert "time: Apr 1 at 3:00 p.m." in message
-    assert "leave by: 2:35 p.m." in message
+    assert "⏰ lunch meeting w/ aryan at illini union!" in message
+    assert "📍 Illini Union (1401 W Green St, Urbana, IL 61801)" in message
+    assert "🕐 Apr 1 at 3:00pm" in message
+    assert "🚗 leave by 2:35pm" in message
     assert "original email:" not in message
 
 
@@ -51,7 +51,7 @@ def test_format_summary_separates_notes_with_blank_line(monkeypatch):
         processing_notes=["Used fallback origin instead."],
     )
 
-    assert "\n\nnote: Used fallback origin instead." in message
+    assert "\n\nℹ️ Used fallback origin instead." in message
 
 
 def test_format_leave_alert_uses_urgent_text_and_location():
@@ -68,7 +68,7 @@ def test_format_leave_alert_uses_urgent_text_and_location():
     )
 
     assert message.startswith("‼️ hey, it's time to leave for dinner at oozu ramen w/ aryan!")
-    assert "location: Oozu Ramen (601 S 6th St #102, Champaign, IL 61820)" in message
+    assert "📍 Oozu Ramen (601 S 6th St #102, Champaign, IL 61820)" in message
 
 
 @pytest.mark.anyio
@@ -102,7 +102,7 @@ async def test_send_summary_sends_email_link_as_follow_up_message(monkeypatch):
     )
 
     assert len(sent_messages) == 2
-    assert sent_messages[0].startswith("reminder: lunch meeting w/ aryan at illini union!")
+    assert sent_messages[0].startswith("⏰ lunch meeting w/ aryan at illini union!")
     assert sent_messages[1] == "https://mail.google.com/mail/u/0/#all/thread-123"
 
 
@@ -137,7 +137,7 @@ async def test_send_summary_skips_email_link_when_text_email_links_disabled(monk
     )
 
     assert len(sent_messages) == 1
-    assert sent_messages[0].startswith("reminder: lunch meeting w/ aryan at illini union!")
+    assert sent_messages[0].startswith("⏰ lunch meeting w/ aryan at illini union!")
 
 
 @pytest.mark.anyio

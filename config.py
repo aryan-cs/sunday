@@ -135,6 +135,9 @@ class Config:
     travel_mode: str = _get_with_legacy("TRAVEL_TYPE", "DEFAULT_TRAVEL_MODE", "driving")
     auto_cleanup_hours: int = int(os.getenv("AUTO_CLEANUP_HOURS", "24"))
     gmail_labels: list[str] = _get_csv("GMAIL_LABELS", "INBOX")
+    priority_context: str = os.getenv("PRIORITY_CONTEXT", "")
+    authority_domains: list[str] = _get_csv("AUTHORITY_DOMAINS", ".edu,linkedin.com,greenhouse.io,lever.co,workday.com")
+    min_priority_score: int = int(os.getenv("MIN_PRIORITY_SCORE", "1"))
     timezone: str = os.getenv("TIMEZONE", "America/Chicago")
     state_dir: str = os.getenv("STATE_DIR", str(Path(__file__).parent / ".state"))
 
@@ -210,6 +213,8 @@ class Config:
             errors.append("LLM_RETRY_ATTEMPTS must be at least 1.")
         if cls.llm_retry_base_seconds <= 0:
             errors.append("LLM_RETRY_BASE_SECONDS must be greater than 0.")
+        if not (1 <= cls.min_priority_score <= 5):
+            errors.append("MIN_PRIORITY_SCORE must be between 1 and 5.")
         if cls.llm_requests_per_minute is not None and cls.llm_requests_per_minute < 1:
             errors.append("LLM_REQUESTS_PER_MINUTE must be at least 1 when set.")
 

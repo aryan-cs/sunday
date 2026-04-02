@@ -269,6 +269,8 @@ def format_summary(
     travel_info: dict | None = None,
     processing_notes: list[str] | None = None,
     source_email_link: str | None = None,
+    conflicts: list[str] | None = None,
+    priority_reason: str | None = None,
 ) -> str:
     """Format a parsed email dict into a human-readable message."""
     del source_email_link
@@ -297,6 +299,12 @@ def format_summary(
 
         if calendar_status == "skipped_incomplete":
             lines.append("📅 not added yet")
+
+        if conflicts:
+            lines.append(f"⚠️ conflicts with: {', '.join(conflicts)}")
+
+        if priority_reason:
+            lines.append(f"🏷 {priority_reason}")
     else:
         lines.append(f"📬 {summary}")
 
@@ -386,6 +394,8 @@ async def send_summary(
     travel_info: dict | None = None,
     processing_notes: list[str] | None = None,
     source_email_link: str | None = None,
+    conflicts: list[str] | None = None,
+    priority_reason: str | None = None,
 ) -> None:
     """
     Format and dispatch a summary to all configured messaging channels.
@@ -399,5 +409,7 @@ async def send_summary(
         travel_info,
         processing_notes,
         source_email_link,
+        conflicts,
+        priority_reason,
     )
     await send_text_message(message, source_email_link)

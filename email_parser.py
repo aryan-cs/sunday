@@ -90,10 +90,17 @@ class ParsedEmail(BaseModel):
     has_event: bool
     needs_response: bool
     urgency: str
+    priority_score: int = 3
+    priority_reason: str = ""
     summary: str
     event: ParsedEvent | None = None
     action_items: list[str] = Field(default_factory=list)
     can_wait: bool
+
+    @field_validator("priority_score")
+    @classmethod
+    def _clamp_priority_score(cls, v: int) -> int:
+        return max(1, min(5, v))
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -151,6 +158,8 @@ Return this exact JSON structure:
   "has_event": true/false,
   "needs_response": true/false,
   "urgency": "high" | "medium" | "low" | "none",
+  "priority_score": <integer 1-5, how relevant this email is to the user's stated priorities. Default 3 if no priorities configured>,
+  "priority_reason": "<one sentence explaining the score, e.g. 'Discusses internship interview mentioned in user priorities'>",
   "summary": "One-line human summary of the email",
   "event": {
     "title": "Meeting/event title or null if unknown",
@@ -656,10 +665,17 @@ async def parse_email(email_data: dict) -> dict:
         f"Body:\n{email_data.get('body', '')[:3000]}"
     )
 
+    system = EMAIL_PARSER_SYSTEM_PROMPT
+    if Config.priority_context:
+        system += (
+            f"\n\nUSER PRIORITIES: {Config.priority_context}\n"
+            "Use this to inform the priority_score field (1=irrelevant, 5=critical)."
+        )
+
     try:
         parsed = await parse_with_json(
             prompt=user_prompt,
-            system=EMAIL_PARSER_SYSTEM_PROMPT,
+            system=system,
             temperature=0.1,
         )
         validated = ParsedEmail.model_validate(parsed)

@@ -350,10 +350,36 @@ async def process_single_email(
     parsed = enrich_event_details(parsed, email_data)
     log.info("  %s", summarise_parsed(parsed))
 
+    # Sender authority boost: .edu addresses, recruiter domains, etc.
+    sender = email_data.get("from", "").lower()
+    if any(sender.endswith(domain.lower()) for domain in Config.authority_domains):
+        parsed["priority_score"] = min(5, parsed.get("priority_score", 3) + 1)
+        log.info("  → Authority sender boost: score now %d", parsed["priority_score"])
+
+    priority_score = parsed.get("priority_score", 3)
+    priority_reason = parsed.get("priority_reason", "")
+    log.info("  → Priority score: %d/5%s", priority_score, f" — {priority_reason}" if priority_reason else "")
+
+    if priority_score < Config.min_priority_score:
+        log.info(
+            "  → Skipped: score %d < MIN_PRIORITY_SCORE %d",
+            priority_score,
+            Config.min_priority_score,
+        )
+        gmail.mark_as_processed(email_data["id"])
+        return {
+            "email_id": email_data.get("id"),
+            "subject": email_data.get("subject"),
+            "skipped": True,
+            "priority_score": priority_score,
+            "priority_reason": priority_reason,
+        }
+
     calendar_status = "not_applicable"
     calendar_event_link: str | None = None
     processing_notes: list[str] = []
     travel_info: dict | None = None
+    conflicts: list[str] = []
 
     if parsed.get("has_event") and parsed.get("event"):
         readiness_issues = get_calendar_readiness_issues(parsed)
@@ -415,6 +441,19 @@ async def process_single_email(
                         travel_info.get("origin_source", origin_source or "unknown"),
                     )
 
+            # Conflict detection: check for existing events in the same time window
+            conflicts: list[str] = []
+            if event.get("date") and event.get("start_time") and event.get("end_time"):
+                try:
+                    start_dt = datetime.fromisoformat(f"{event['date']}T{event['start_time']}")
+                    end_dt = datetime.fromisoformat(f"{event['date']}T{event['end_time']}")
+                    existing = calendar.list_events_in_window(start_dt, end_dt)
+                    conflicts = [e["summary"] for e in existing if e.get("summary")]
+                    if conflicts:
+                        log.warning("  → Conflict detected with: %s", conflicts)
+                except Exception as exc:
+                    log.warning("  → Conflict check unavailable: %s", exc)
+
             calendar_result = calendar.create_smart_event(
                 event,
                 travel_info,
@@ -430,6 +469,8 @@ async def process_single_email(
         travel_info=travel_info,
         processing_notes=processing_notes,
         source_email_link=_build_gmail_thread_link(email_data),
+        conflicts=conflicts,
+        priority_reason=priority_reason,
     )
     log.info("  → Summary sent")
 
@@ -444,6 +485,9 @@ async def process_single_email(
         "calendar_event_link": calendar_event_link,
         "urgency": parsed.get("urgency"),
         "summary": parsed.get("summary"),
+        "priority_score": priority_score,
+        "priority_reason": priority_reason,
+        "conflicts": conflicts,
         "processing_notes": processing_notes,
     }
 

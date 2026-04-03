@@ -90,6 +90,7 @@ class ParsedEmail(BaseModel):
     has_event: bool
     needs_response: bool
     urgency: str
+    email_type: str = "personal"
     summary: str
     event: ParsedEvent | None = None
     action_items: list[str] = Field(default_factory=list)
@@ -111,6 +112,12 @@ class ParsedEmail(BaseModel):
         if value not in {"high", "medium", "low", "none"}:
             raise ValueError("urgency must be one of: high, medium, low, none")
         return value
+
+    @field_validator("email_type")
+    @classmethod
+    def _validate_email_type(cls, value: str) -> str:
+        valid = {"event", "action_required", "promotional", "transactional", "informational", "personal"}
+        return value if value in valid else "personal"
 
     @field_validator("action_items", mode="before")
     @classmethod
@@ -151,6 +158,7 @@ Return this exact JSON structure:
   "has_event": true/false,
   "needs_response": true/false,
   "urgency": "high" | "medium" | "low" | "none",
+  "email_type": "event" | "promotional" | "transactional" | "action_required" | "informational" | "personal",
   "summary": "One-line human summary of the email",
   "event": {
     "title": "Meeting/event title or null if unknown",
@@ -167,6 +175,14 @@ Return this exact JSON structure:
   "action_items": ["List of things the user might need to do"],
   "can_wait": true/false
 }
+
+email_type rules:
+- "promotional": marketing emails, sale announcements, ads, discount offers, promotional newsletters
+- "transactional": receipts, order confirmations, shipping updates, password resets, account alerts
+- "event": any email that contains a meeting, appointment, or calendar event invitation
+- "action_required": emails that need the user to do something specific (not promotional)
+- "informational": newsletters, articles, digests, updates (non-promotional)
+- "personal": messages from real people that don't fit other categories
 
 Rules:
 - If has_event is false, set event to null.

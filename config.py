@@ -138,6 +138,9 @@ class Config:
     timezone: str = os.getenv("TIMEZONE", "America/Chicago")
     state_dir: str = os.getenv("STATE_DIR", str(Path(__file__).parent / ".state"))
 
+    # ── Filtering ──
+    process_promotional: bool = os.getenv("PROCESS_PROMOTIONAL", "false").lower() == "true"
+
     # ── Advanced ──
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))

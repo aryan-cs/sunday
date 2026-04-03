@@ -330,6 +330,36 @@ def format_summary(
     return "\n".join(lines)
 
 
+def format_external_leave_alert(calendar_event: dict, travel_info: dict) -> str:
+    """Format a leave-now alert for an existing calendar event not managed by Sunday."""
+    title = _trim_sentence(calendar_event.get("summary") or "your event")
+    location = _calendar_event_location_label(calendar_event)
+    location_name = _location_name_for_headline(location)
+
+    mode_phrase = {
+        "driving": "drive",
+        "walking": "walk",
+        "bicycling": "bike",
+        "transit": "take transit",
+    }.get(Config.travel_mode, "head out")
+
+    travel_text = (travel_info.get("travel_text") or "").strip()
+
+    headline = _casualize_headline(title)
+    if location_name and _normalise_match(location_name) not in _normalise_match(headline):
+        headline = f"{headline} at {location_name}"
+
+    first_line = f"‼️ hey, time to leave for {headline}!"
+    lines = [first_line]
+
+    if location:
+        lines.append(f"📍 {location}")
+    if travel_text:
+        lines.append(f"🗺️ {travel_text} {mode_phrase}")
+
+    return "\n".join(lines)
+
+
 def format_leave_alert(calendar_event: dict) -> str:
     """Format a leave-now text message for a due in-person event."""
     lines = [f"‼️ hey, it's time to leave for {_build_leave_alert_headline(calendar_event)}!"]

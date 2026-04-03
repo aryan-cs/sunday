@@ -138,6 +138,10 @@ class Config:
     timezone: str = os.getenv("TIMEZONE", "America/Chicago")
     state_dir: str = os.getenv("STATE_DIR", str(Path(__file__).parent / ".state"))
 
+    # ── Expo app ──
+    expo_push_enabled: bool = os.getenv("EXPO_PUSH_ENABLED", "false").lower() == "true"
+    app_location_max_age_minutes: int = int(os.getenv("APP_LOCATION_MAX_AGE_MINUTES", "30"))
+
     # ── Advanced ──
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))

@@ -5,16 +5,19 @@ Sends formatted summaries to Telegram and/or iMessage (macOS only).
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from config import Config
 from errors import MessagingDeliveryError
+from state_store import get_state_file
 
 log = logging.getLogger(__name__)
 _DISPLAY_LOCATION_PROPERTY = "smartCalendarDisplayLocation"
@@ -339,10 +342,68 @@ def format_leave_alert(calendar_event: dict) -> str:
     return "\n".join(lines)
 
 
+class ExpoPushSender:
+    """Send push notifications to registered Expo app devices."""
+
+    EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+    def _load_tokens(self) -> list[str]:
+        path = get_state_file("push_tokens.json")
+        if not path.exists():
+            return []
+        try:
+            tokens = json.loads(path.read_text())
+            return [t for t in tokens if isinstance(t, str) and t.startswith("ExponentPushToken")]
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _prune_token(self, token: str) -> None:
+        """Remove a token that Expo reports as invalid."""
+        path = get_state_file("push_tokens.json")
+        try:
+            tokens = json.loads(path.read_text())
+            tokens = [t for t in tokens if t != token]
+            path.write_text(json.dumps(tokens))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    async def send(self, message: str) -> bool:
+        if not Config.expo_push_enabled:
+            return False
+
+        tokens = self._load_tokens()
+        if not tokens:
+            log.debug("Expo push enabled but no tokens registered")
+            return False
+
+        messages = [{"to": token, "title": "Sunday", "body": message} for token in tokens]
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(self.EXPO_PUSH_URL, json=messages)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            raise MessagingDeliveryError("Expo push send failed.") from exc
+
+        sent_any = False
+        for token, result in zip(tokens, data.get("data", [])):
+            status = result.get("status")
+            if status == "ok":
+                sent_any = True
+            elif result.get("details", {}).get("error") == "DeviceNotRegistered":
+                log.warning("Pruning unregistered Expo token")
+                self._prune_token(token)
+
+        log.debug("Expo push sent to %d device(s)", len(tokens))
+        return sent_any
+
+
 async def send_text_message(message: str, follow_up_link: str | None = None) -> None:
     """Send a plain outbound text through all configured messaging channels."""
     telegram = TelegramMessenger()
     imessage = IMessageSender()
+    expo = ExpoPushSender()
 
     configured_channels = 0
     sent_any = False
@@ -368,6 +429,13 @@ async def send_text_message(message: str, follow_up_link: str | None = None) -> 
         configured_channels += 1
         try:
             sent_any |= await _send_main_and_link(imessage)
+        except MessagingDeliveryError as exc:
+            errors.append(str(exc))
+
+    if Config.expo_push_enabled:
+        configured_channels += 1
+        try:
+            sent_any |= await expo.send(message)
         except MessagingDeliveryError as exc:
             errors.append(str(exc))
 

@@ -193,6 +193,53 @@ def _google_event_dt(event_item: dict, edge: str) -> datetime | None:
     return parsed.astimezone(tz)
 
 
+def _get_live_location() -> tuple[str | None, str | None, str | None]:
+    """
+    Return the freshest available iPhone GPS location.
+
+    Checks two sources in priority order:
+      1. .state/app_location.json  — written by the Expo app via POST /api/location
+      2. iCloud Drive sunday-location.json — written by the iOS Shortcut fallback
+
+    Returns (maps_origin, label, source) or (None, None, None) when unavailable/stale.
+    """
+    from datetime import timezone as _tz
+    from pathlib import Path
+
+    max_age = timedelta(minutes=Config.app_location_max_age_minutes)
+    now_utc = datetime.now(_tz.utc)
+
+    # Source 1: Expo app
+    app_path = get_state_file("app_location.json")
+    if app_path.exists():
+        try:
+            data = json.loads(app_path.read_text())
+            received_at = datetime.fromisoformat(data["received_at"].replace("Z", "+00:00"))
+            if received_at.tzinfo is None:
+                received_at = received_at.replace(tzinfo=_tz.utc)
+            if now_utc - received_at <= max_age:
+                lat, lng = data["latitude"], data["longitude"]
+                return f"{lat},{lng}", f"{lat},{lng}", "app_gps"
+        except (KeyError, ValueError, OSError, json.JSONDecodeError):
+            pass
+
+    # Source 2: iCloud Drive Shortcut
+    icloud_path = (
+        Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "sunday-location.json"
+    )
+    if icloud_path.exists():
+        try:
+            data = json.loads(icloud_path.read_text())
+            mtime = datetime.fromtimestamp(icloud_path.stat().st_mtime, tz=_tz.utc)
+            if now_utc - mtime <= max_age:
+                lat, lng = data["lat"], data["lng"]
+                return f"{lat},{lng}", f"{lat},{lng}", "icloud_shortcut"
+        except (KeyError, ValueError, OSError, json.JSONDecodeError):
+            pass
+
+    return None, None, None
+
+
 def _origin_from_address(
     address: str | None,
     lat: float | None,
@@ -303,11 +350,17 @@ async def _choose_travel_origin(
     Infer the most likely travel origin for an event.
 
     Priority:
-      1. The latest scheduled calendar event with a location before this event
-      2. Configured work location during work hours
-      3. Configured home location
+      1. Live iPhone GPS (Expo app or iCloud Shortcut)
+      2. The latest scheduled calendar event with a location before this event
+      3. Configured work location during work hours
+      4. Configured home location
     """
     start_dt = _event_start_dt(event)
+
+    live = _get_live_location()
+    if live[0]:
+        log.info("  → Travel origin: %s", live[2])
+        return live
 
     try:
         scheduled_origin = _scheduled_origin_for_event(calendar, start_dt)

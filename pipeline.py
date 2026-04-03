@@ -16,7 +16,7 @@ from config import Config
 from email_parser import enrich_event_details, get_calendar_readiness_issues, parse_email, summarise_parsed
 from errors import ConfigurationError, TravelEstimationError
 from gmail_watcher import GmailWatcher
-from messenger import format_leave_alert, send_summary, send_text_message
+from messenger import format_external_leave_alert, format_leave_alert, send_summary, send_text_message
 from state_store import get_state_file
 from travel_estimator import TravelEstimator
 
@@ -28,6 +28,8 @@ _travel: TravelEstimator | None = None
 _CALENDAR_ORIGIN_LOOKBACK = timedelta(hours=6)
 _LEAVE_ALERT_LOOKAHEAD = timedelta(days=1)
 _LEAVE_ALERT_STATE_FILE = "sent_leave_alerts.json"
+_EXTERNAL_ALERT_STATE_FILE = "external_leave_alerts.json"
+_EXTERNAL_ALERT_WINDOW = timedelta(hours=3)
 _WEEKDAY_INDEX = {
     "mon": 0,
     "tue": 1,
@@ -88,6 +90,63 @@ def _prune_sent_leave_alerts(sent: dict[str, str], now: datetime) -> dict[str, s
             pruned[key] = sent_at
 
     return pruned
+
+
+def _load_external_alert_state() -> dict:
+    """Load the external leave-alert state (sent + computed caches)."""
+    path = get_state_file(_EXTERNAL_ALERT_STATE_FILE)
+    if not path.exists():
+        return {"sent": {}, "computed": {}}
+    try:
+        data = json.loads(path.read_text())
+        return {"sent": data.get("sent", {}), "computed": data.get("computed", {})}
+    except (OSError, json.JSONDecodeError):
+        return {"sent": {}, "computed": {}}
+
+
+def _save_external_alert_state(state: dict) -> None:
+    path = get_state_file(_EXTERNAL_ALERT_STATE_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True))
+
+
+def _prune_external_alert_state(state: dict, now: datetime) -> dict:
+    """Remove stale entries from the external alert state."""
+    cutoff = now - timedelta(days=2)
+    tz = ZoneInfo(Config.timezone)
+
+    sent: dict[str, str] = {}
+    for key, sent_at in state.get("sent", {}).items():
+        try:
+            parsed = datetime.fromisoformat(sent_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=tz)
+            if parsed >= cutoff:
+                sent[key] = sent_at
+        except ValueError:
+            pass
+
+    computed: dict[str, dict] = {}
+    for key, info in state.get("computed", {}).items():
+        try:
+            leave_by = datetime.fromisoformat(info.get("leave_by", "").replace("Z", "+00:00"))
+            if leave_by.tzinfo is None:
+                leave_by = leave_by.replace(tzinfo=tz)
+            if leave_by >= cutoff:
+                computed[key] = info
+        except ValueError:
+            pass
+
+    return {"sent": sent, "computed": computed}
+
+
+def _external_alert_key(event_item: dict) -> str | None:
+    """Build a stable deduplication key for an external event alert."""
+    event_id = (event_item.get("id") or "").strip()
+    start = ((event_item.get("start") or {}).get("dateTime") or "").strip()
+    if not event_id or not start:
+        return None
+    return f"{event_id}:{start}"
 
 
 def _leave_alert_at_from_event(event_item: dict) -> datetime | None:
@@ -350,6 +409,15 @@ async def process_single_email(
     parsed = enrich_event_details(parsed, email_data)
     log.info("  %s", summarise_parsed(parsed))
 
+    if parsed.get("email_type") == "promotional" and not Config.process_promotional:
+        log.info("  → Skipping promotional email (set PROCESS_PROMOTIONAL=true to enable)")
+        gmail.mark_as_processed(email_data["id"])
+        return {
+            "email_id": email_data.get("id"),
+            "subject": email_data.get("subject"),
+            "skipped": "promotional",
+        }
+
     calendar_status = "not_applicable"
     calendar_event_link: str | None = None
     processing_notes: list[str] = []
@@ -448,6 +516,127 @@ async def process_single_email(
     }
 
 
+async def _send_external_leave_alerts(
+    calendar: CalendarManager,
+    travel: TravelEstimator,
+    now: datetime,
+) -> list[dict]:
+    """
+    Send leave alerts for calendar events not managed by Sunday.
+
+    Travel time is computed once per event and cached so Maps is only
+    called once regardless of how many polling cycles pass before departure.
+    """
+    state = _prune_external_alert_state(_load_external_alert_state(), now)
+    tz = ZoneInfo(Config.timezone)
+
+    try:
+        events = calendar.list_events_in_window(now, now + _EXTERNAL_ALERT_WINDOW)
+    except Exception as exc:
+        log.warning("External alert scan unavailable: %s", exc)
+        return []
+
+    results: list[dict] = []
+    state_dirty = False
+
+    for event_item in events:
+        # Skip Sunday-managed events — they have their own alert property
+        private = ((event_item.get("extendedProperties") or {}).get("private") or {})
+        if private.get(CalendarManager.LEAVE_ALERT_AT_PROPERTY):
+            continue
+
+        location = (event_item.get("location") or "").strip()
+        if not location:
+            continue
+
+        start_dt = _google_event_dt(event_item, "start")
+        if start_dt is None or start_dt <= now:
+            continue
+
+        alert_key = _external_alert_key(event_item)
+        if not alert_key or alert_key in state["sent"]:
+            continue
+
+        travel_info: dict = {}
+
+        if alert_key in state["computed"]:
+            cached = state["computed"][alert_key]
+            try:
+                leave_by = datetime.fromisoformat(cached["leave_by"])
+                if leave_by.tzinfo is None:
+                    leave_by = leave_by.replace(tzinfo=tz)
+            except (ValueError, KeyError):
+                del state["computed"][alert_key]
+                state_dirty = True
+                continue
+
+            if leave_by > now:
+                continue  # Not time yet
+
+            travel_info = cached.get("travel_info", {})
+        else:
+            # First time seeing this event — compute travel (one Maps API call)
+            origin, origin_label, origin_source = _default_origin_for_event(start_dt)
+            if not origin:
+                continue
+
+            try:
+                departure = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                travel_info = await travel.estimate(
+                    destination=location,
+                    departure_time=departure,
+                    origin=origin,
+                    origin_label=origin_label,
+                    origin_source=origin_source,
+                )
+            except (ConfigurationError, TravelEstimationError) as exc:
+                log.debug(
+                    "External alert travel estimate failed for %r: %s",
+                    event_item.get("summary"),
+                    exc,
+                )
+                continue
+
+            travel_minutes = int(travel_info.get("travel_minutes") or 0)
+            local_start = start_dt.astimezone(tz)
+            leave_by = local_start - timedelta(minutes=travel_minutes + Config.prep_time)
+
+            state["computed"][alert_key] = {
+                "leave_by": leave_by.isoformat(),
+                "travel_info": travel_info,
+            }
+            state_dirty = True
+
+            if leave_by > now:
+                continue  # Computed and cached; will fire on a future cycle
+
+        try:
+            await send_text_message(format_external_leave_alert(event_item, travel_info))
+        except Exception as exc:
+            log.error(
+                "External leave alert delivery failed for %r: %s",
+                event_item.get("summary") or event_item.get("id"),
+                exc,
+            )
+            results.append({"event_id": event_item.get("id"), "error": str(exc)})
+            continue
+
+        state["sent"][alert_key] = now.isoformat()
+        state["computed"].pop(alert_key, None)
+        state_dirty = True
+        log.info("External leave alert sent for %s", event_item.get("summary") or event_item.get("id"))
+        results.append({
+            "event_id": event_item.get("id"),
+            "summary": event_item.get("summary"),
+            "status": "sent",
+        })
+
+    if state_dirty:
+        _save_external_alert_state(state)
+
+    return results
+
+
 async def send_due_leave_alerts(
     calendar: CalendarManager | None = None,
     now: datetime | None = None,
@@ -515,6 +704,10 @@ async def send_due_leave_alerts(
 
     if state_dirty:
         _save_sent_leave_alerts(sent_state)
+
+    _, _, active_travel = _get_singletons()
+    external_results = await _send_external_leave_alerts(active_calendar, active_travel, now_local)
+    results.extend(external_results)
 
     return results
 

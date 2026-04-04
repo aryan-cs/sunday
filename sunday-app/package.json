@@ -4,28 +4,23 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start --tunnel",
-    "start:dev-client": "expo start --dev-client --tunnel",
     "start:lan": "expo start --lan",
     "start:clear": "expo start --clear --tunnel",
     "android": "expo start --android --tunnel",
     "ios": "expo start --ios --tunnel",
-    "web": "expo start --web",
-    "build:ios:preview": "eas build --platform ios --profile preview",
-    "build:ios:dev": "eas build --platform ios --profile development"
+    "web": "expo start --web"
   },
   "dependencies": {
     "expo": "~54.0.33",
     "expo-location": "~19.0.8",
-    "expo-notifications": "~0.32.16",
-    "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-safe-area-context": "~5.6.0"
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-svg": "15.12.1"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
-    "react-native-svg-transformer": "^1.5.3",
     "typescript": "~5.9.2"
   },
   "private": true

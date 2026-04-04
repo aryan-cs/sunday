@@ -3,10 +3,18 @@ import Svg, { Path } from "react-native-svg";
 
 type IconProps = { size?: number; color?: string };
 
-export function RecordIcon({ size = 24, color = "#e3e3e3" }: IconProps) {
+export function RecordInactiveIcon({ size = 24, color = "#e3e3e3" }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 -960 960 960" fill={color}>
-      <Path d="M480-480ZM282-282q-82-82-82-198t82-198q82-82 198-82t198 82q82 82 82 198t-82 198q-82 82-198 82t-198-82Zm339.5-56.5Q680-397 680-480t-58.5-141.5Q563-680 480-680t-141.5 58.5Q280-563 280-480t58.5 141.5Q397-280 480-280t141.5-58.5Z" />
+      <Path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Z" />
+    </Svg>
+  );
+}
+
+export function RecordActiveIcon({ size = 24, color = "#e3e3e3" }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 -960 960 960" fill={color}>
+      <Path d="M621.5-338.5Q680-397 680-480t-58.5-141.5Q563-680 480-680t-141.5 58.5Q280-563 280-480t58.5 141.5Q397-280 480-280t141.5-58.5ZM480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Z" />
     </Svg>
   );
 }

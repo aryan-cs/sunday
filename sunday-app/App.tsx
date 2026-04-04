@@ -12,7 +12,12 @@ import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-cont
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { AlertEntry, AlertsScreen } from "./src/screens/AlertsScreen";
-import { SettingsIcon, RecordIcon, AlertIcon } from "./src/components/NavIcons";
+import {
+  SettingsIcon,
+  RecordActiveIcon,
+  RecordInactiveIcon,
+  AlertIcon,
+} from "./src/components/NavIcons";
 import { summarizeTranscript } from "./src/lib/transcriptSummary";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -25,12 +30,13 @@ const INDICATOR_HORIZONTAL_INSET = 4;
 const ACTIVE_COLOR = "#ffffff";
 const SELECTED_ICON_COLOR = BACKGROUND;
 const INACTIVE_COLOR = "#f4f4f4";
+const RECORD_ACTIVE_COLOR = "#eb4034";
 
 // Order: Settings (0) — Record (1) — Alerts (2)
 // Record starts as the active/center screen.
 const TABS = [
   { key: "settings", Icon: SettingsIcon },
-  { key: "record", Icon: RecordIcon },
+  { key: "record", Icon: RecordInactiveIcon },
   { key: "alerts", Icon: AlertIcon },
 ] as const;
 
@@ -56,6 +62,13 @@ function getIndicatorWidth(index: number) {
   return INDICATOR_WIDTH;
 }
 
+function getTabIcon(index: number, isRecordingActive: boolean) {
+  if (index !== RECORD_TAB_INDEX) {
+    return TABS[index].Icon;
+  }
+  return isRecordingActive ? RecordActiveIcon : RecordInactiveIcon;
+}
+
 function Main() {
   const insets = useSafeAreaInsets();
   const scrollRef = React.useRef<ScrollView>(null);
@@ -63,6 +76,7 @@ function Main() {
   const navTranslateY = React.useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
+  const [isRecordingActive, setIsRecordingActive] = React.useState(false);
   const [alertEntries, setAlertEntries] = React.useState<AlertEntry[]>([]);
   const indicatorTranslateX = React.useMemo(
     () =>
@@ -219,6 +233,7 @@ function Main() {
             onBackgroundPress={handleRecordBackgroundPress}
             onTranscriptPending={handleTranscriptPending}
             onTranscript={handleTranscript}
+            onRecordingChange={setIsRecordingActive}
           />
         </View>
         <View style={styles.page}><AlertsScreen entries={alertEntries} /></View>
@@ -232,13 +247,16 @@ function Main() {
         ]}
       >
         {TABS.map((tab, i) => {
+          const IconComponent = getTabIcon(i, isRecordingActive);
+          const iconColor =
+            i === RECORD_TAB_INDEX && isRecordingActive ? RECORD_ACTIVE_COLOR : INACTIVE_COLOR;
           return (
             <Pressable
               key={tab.key}
               onPress={() => handleTabPress(i)}
               style={styles.navItem}
             >
-              <tab.Icon size={28} color={INACTIVE_COLOR} />
+              <IconComponent size={28} color={iconColor} />
             </Pressable>
           );
         })}
@@ -261,11 +279,19 @@ function Main() {
               },
             ]}
           >
-            {TABS.map((tab) => (
+            {TABS.map((tab, i) => {
+              const IconComponent = getTabIcon(i, isRecordingActive);
+              const iconColor =
+                i === RECORD_TAB_INDEX && isRecordingActive
+                  ? RECORD_ACTIVE_COLOR
+                  : SELECTED_ICON_COLOR;
+
+              return (
               <View key={`${tab.key}-selected`} style={styles.indicatorIconSlot}>
-                <tab.Icon size={28} color={SELECTED_ICON_COLOR} />
+                <IconComponent size={28} color={iconColor} />
               </View>
-            ))}
+              );
+            })}
           </Animated.View>
         </Animated.View>
       </Animated.View>

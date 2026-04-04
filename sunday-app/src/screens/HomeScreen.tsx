@@ -25,14 +25,24 @@ type HomeScreenProps = {
   onBackgroundPress?: () => void;
   onTranscriptPending?: () => string;
   onTranscript?: (entryId: string, transcript: string) => void;
+  onRecordingChange?: (isRecording: boolean) => void;
 };
 
-export function HomeScreen({ onBackgroundPress, onTranscriptPending, onTranscript }: HomeScreenProps) {
+export function HomeScreen({
+  onBackgroundPress,
+  onTranscriptPending,
+  onTranscript,
+  onRecordingChange,
+}: HomeScreenProps) {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
   const [isTogglingRecording, setIsTogglingRecording] = React.useState(false);
   const scale = React.useRef(new Animated.Value(1)).current;
   const isRecording = recorderState.isRecording;
+
+  React.useEffect(() => {
+    onRecordingChange?.(isRecording);
+  }, [isRecording, onRecordingChange]);
 
   const handleBackgroundPress = React.useCallback(() => {
     onBackgroundPress?.();

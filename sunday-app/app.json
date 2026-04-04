@@ -10,8 +10,10 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Used to calculate accurate travel time from your current location."
-      }
+        "NSLocationWhenInUseUsageDescription": "Used to calculate accurate travel time from your current location.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "com.aryancs.sunday"
     },
     "plugins": [
       [
@@ -28,7 +30,6 @@
           }
         }
       ],
-      "expo-notifications",
       "expo-location"
     ],
     "android": {
@@ -37,10 +38,19 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "acc5c7f8-6f36-47b2-ac14-5c610a5acc07"
+      }
     }
   }
 }

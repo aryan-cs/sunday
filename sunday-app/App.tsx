@@ -222,6 +222,21 @@ function Main() {
     );
   }, []);
 
+  const handleTranscriptError = React.useCallback((entryId: string, message: string) => {
+    setAlertEntries((current) =>
+      current.map((entry) =>
+        entry.id === entryId
+          ? {
+              ...entry,
+              transcript: message,
+              summary: "Transcription failed",
+              status: "failed",
+            }
+          : entry,
+      ),
+    );
+  }, []);
+
   const handleDeleteAlert = React.useCallback((entryId: string) => {
     setAlertEntries((current) => current.filter((entry) => entry.id !== entryId));
   }, []);
@@ -274,6 +289,7 @@ function Main() {
             onBackgroundPress={handleRecordBackgroundPress}
             onTranscriptPending={handleTranscriptPending}
             onTranscript={handleTranscript}
+            onTranscriptError={handleTranscriptError}
             onRecordingChange={setIsRecordingActive}
           />
         </View>

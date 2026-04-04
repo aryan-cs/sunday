@@ -1,5 +1,6 @@
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const API_TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
+const TRANSCRIPTION_REQUEST_TIMEOUT_MS = 45000;
 
 type TranscriptionResponse = {
   text?: string;
@@ -28,6 +29,29 @@ function getAudioMimeType(fileName: string) {
   return "audio/m4a";
 }
 
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs = TRANSCRIPTION_REQUEST_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Transcription request timed out.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function uploadRecordingForTranscription(uri: string): Promise<TranscriptionResult> {
   if (!API_BASE_URL) {
     throw new Error("EXPO_PUBLIC_API_BASE_URL is not configured.");
@@ -47,7 +71,7 @@ export async function uploadRecordingForTranscription(uri: string): Promise<Tran
     headers.authorization = `Bearer ${API_TOKEN}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/transcribe`, {
+  const response = await fetchWithTimeout(`${API_BASE_URL}/api/transcribe`, {
     method: "POST",
     headers,
     body: formData,

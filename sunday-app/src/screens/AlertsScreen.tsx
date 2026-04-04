@@ -24,7 +24,7 @@ export type AlertEntry = {
   summary: string;
   transcript: string;
   createdAt: string;
-  status: "pending" | "complete";
+  status: "pending" | "complete" | "failed";
 };
 
 type AlertsScreenProps = {
@@ -127,6 +127,9 @@ export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
                   <Text style={styles.summary}>
                     {item.status === "pending" ? "Transcription loading..." : item.summary}
                   </Text>
+                  {item.status === "failed" && item.transcript ? (
+                    <Text style={styles.failureBody}>{item.transcript}</Text>
+                  ) : null}
                 </View>
               </View>
               <Text style={styles.timestamp}>{formatTimestamp(item.createdAt)}</Text>
@@ -207,6 +210,13 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 24,
     fontFamily: FONTS.medium,
+  },
+  failureBody: {
+    marginTop: 6,
+    color: EMPTY,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: FONTS.regular,
   },
   timestamp: {
     color: EMPTY,

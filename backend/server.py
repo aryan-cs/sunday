@@ -30,7 +30,7 @@ from .errors import ConfigurationError, TravelEstimationError
 from .logging_utils import setup_logging
 from .pipeline import run_pipeline, send_due_leave_alerts
 from .state_store import get_state_file
-from .title_generation import generate_transcript_title
+from .title_generation import fallback_transcript_title, generate_transcript_title
 from .transcription import TranscriptionError, transcribe_audio_file
 from .travel_estimator import TravelEstimator
 
@@ -474,7 +474,14 @@ async def transcribe_recording(file: UploadFile = File(...)):
     upload_path = await _save_upload_to_temp(file)
     try:
         transcript = await asyncio.to_thread(transcribe_audio_file, upload_path)
-        summary = await asyncio.to_thread(generate_transcript_title, transcript)
+        try:
+            summary = await asyncio.wait_for(
+                asyncio.to_thread(generate_transcript_title, transcript),
+                timeout=8.0,
+            )
+        except asyncio.TimeoutError:
+            summary = fallback_transcript_title(transcript)
+            log.warning("Transcript title generation timed out; using fallback title.")
         log.info("Transcribed recording: %s", transcript)
         log.info("Transcript title: %s", summary)
         return {"text": transcript, "summary": summary}

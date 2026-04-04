@@ -26,6 +26,7 @@ type HomeScreenProps = {
   onBackgroundPress?: () => void;
   onTranscriptPending?: () => string;
   onTranscript?: (entryId: string, transcript: string, summary?: string) => void;
+  onTranscriptError?: (entryId: string, message: string) => void;
   onRecordingChange?: (isRecording: boolean) => void;
 };
 
@@ -33,6 +34,7 @@ export function HomeScreen({
   onBackgroundPress,
   onTranscriptPending,
   onTranscript,
+  onTranscriptError,
   onRecordingChange,
 }: HomeScreenProps) {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -78,8 +80,10 @@ export function HomeScreen({
       onTranscript?.(entryId, result.text, result.summary);
     } catch (error) {
       console.error("[sunday] transcription failed", error);
+      const message = error instanceof Error ? error.message : "Transcription failed.";
+      onTranscriptError?.(entryId, message);
     }
-  }, [onTranscript]);
+  }, [onTranscript, onTranscriptError]);
 
   const startRecording = React.useCallback(async () => {
     setIsTogglingRecording(true);

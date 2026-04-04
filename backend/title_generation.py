@@ -62,6 +62,11 @@ def _fallback_title(transcript: str) -> str:
     return " ".join(word.capitalize() for word in selected)
 
 
+def fallback_transcript_title(transcript: str) -> str:
+    """Return the lightweight heuristic fallback title without model inference."""
+    return _fallback_title(transcript)
+
+
 def _resolve_device() -> str:
     requested = (Config.transcript_title_device or "auto").strip().lower()
     if requested in {"mps", "cpu"}:

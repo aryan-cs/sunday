@@ -4,11 +4,14 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start --tunnel",
+    "start:dev-client": "expo start --dev-client --tunnel",
     "start:lan": "expo start --lan",
     "start:clear": "expo start --clear --tunnel",
     "android": "expo start --android --tunnel",
     "ios": "expo start --ios --tunnel",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:ios:preview": "eas build --platform ios --profile preview",
+    "build:ios:dev": "eas build --platform ios --profile development"
   },
   "dependencies": {
     "expo": "~54.0.33",

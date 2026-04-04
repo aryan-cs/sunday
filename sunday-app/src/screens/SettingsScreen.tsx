@@ -1152,13 +1152,14 @@ const styles = StyleSheet.create({
   numericInput: {
     width: 76,
     minHeight: 46,
-    borderRadius: 14,
+    borderRadius: 999,
     paddingHorizontal: 12,
+    paddingVertical: 0,
     color: "#ffffff",
     backgroundColor: PANEL_ALT,
     fontFamily: FONTS.regular,
     fontSize: 17,
-    textAlign: "right",
+    textAlign: "center",
   },
   nativePickerItem: {
     color: "#ffffff",

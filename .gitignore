@@ -68,3 +68,6 @@ htmlcov/
 # ─── Distribution ─────────────────────────────────────────────
 *.tar.gz
 *.zip
+
+# ─── Root-level one-off package manager noise ────────────────
+/package-lock.json

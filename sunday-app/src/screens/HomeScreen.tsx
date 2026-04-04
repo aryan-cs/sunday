@@ -1,7 +1,8 @@
 import React, { useCallback, useRef } from "react";
-import { Animated, Pressable, StatusBar, StyleSheet, View } from "react-native";
+import { Animated, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useVideoPlayer, VideoView } from "expo-video";
+import { BlurView } from "expo-blur";
 
 const BACKGROUND = "#000000";
 const ORB_VIDEO_URL =
@@ -55,6 +56,14 @@ export function HomeScreen() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" />
       <View style={styles.container}>
+        <View style={styles.topBar}>
+          <Pressable style={styles.settingsButton} hitSlop={18}>
+            <BlurView intensity={50} tint="dark" style={styles.settingsBlur}>
+              <Text style={styles.settingsGlyph}>⚙</Text>
+            </BlurView>
+          </Pressable>
+        </View>
+
         <Pressable onPress={animateOrb} style={styles.pressable} hitSlop={24}>
           <Animated.View
             style={[
@@ -86,11 +95,40 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: BACKGROUND,
   },
+  topBar: {
+    position: "absolute",
+    top: 10,
+    right: 16,
+    zIndex: 10,
+  },
+  settingsButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255, 255, 255, 0.16)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  settingsBlur: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+  },
+  settingsGlyph: {
+    color: "#f5f7fb",
+    fontSize: 18,
+    lineHeight: 18,
+    fontWeight: "500",
+  },
   pressable: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },

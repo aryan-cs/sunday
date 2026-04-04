@@ -1,6 +1,7 @@
 import { fetchApi } from "./api";
 
 const API_TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
+const TRANSCRIPTION_REQUEST_TIMEOUT_MS = 45000;
 
 type TranscriptionResponse = {
   text?: string;
@@ -48,6 +49,8 @@ export async function uploadRecordingForTranscription(uri: string): Promise<Tran
     method: "POST",
     headers,
     body: formData,
+  }, {
+    timeoutMs: TRANSCRIPTION_REQUEST_TIMEOUT_MS,
   });
 
   const payload = (await response.json().catch(() => ({}))) as TranscriptionResponse;

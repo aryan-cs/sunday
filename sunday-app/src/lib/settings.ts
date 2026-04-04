@@ -1,6 +1,7 @@
 import { fetchApi } from "./api";
 
 const API_TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
+const SETTINGS_REQUEST_TIMEOUT_MS = 8000;
 
 export type AppSettingsValues = Record<string, string | boolean>;
 
@@ -44,6 +45,8 @@ export async function fetchAppSettings(): Promise<AppSettingsResponse> {
   const response = await fetchApi("/api/settings", {
     method: "GET",
     headers: buildHeaders(),
+  }, {
+    timeoutMs: SETTINGS_REQUEST_TIMEOUT_MS,
   });
 
   return parseResponse(response);
@@ -54,6 +57,8 @@ export async function saveAppSettings(settings: AppSettingsValues): Promise<AppS
     method: "PUT",
     headers: buildHeaders(),
     body: JSON.stringify({ settings }),
+  }, {
+    timeoutMs: SETTINGS_REQUEST_TIMEOUT_MS,
   });
 
   return parseResponse(response);
@@ -67,6 +72,8 @@ export async function reverseGeocodeLocation(
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify({ latitude, longitude }),
+  }, {
+    timeoutMs: SETTINGS_REQUEST_TIMEOUT_MS,
   });
 
   const payload = (await response.json().catch(() => ({}))) as Partial<ReverseGeocodeResponse> & {

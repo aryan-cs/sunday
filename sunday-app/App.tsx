@@ -45,6 +45,8 @@ const INDICATOR_EDGE_EXTENSION = 8;
 const RECORD_TAB_INDEX = 1;
 const CENTER_DOT_SIZE = SCREEN_WIDTH * 0.5;
 const CORNER_DOT_SIZE = 52;
+const DOT_BOUNCE_X = 10;
+const DOT_BOUNCE_Y = 7;
 
 function getIndicatorTarget(index: number) {
   if (index === 0 || index === TABS.length - 1) {
@@ -65,6 +67,10 @@ function Main() {
   const scrollRef = React.useRef<ScrollView>(null);
   const scrollX = React.useRef(new Animated.Value(INITIAL_INDEX * SCREEN_WIDTH)).current;
   const navTranslateY = React.useRef(new Animated.Value(0)).current;
+  const dotBounceX = React.useRef(new Animated.Value(0)).current;
+  const dotBounceY = React.useRef(new Animated.Value(0)).current;
+  const dotBounceScale = React.useRef(new Animated.Value(1)).current;
+  const previousIndexRef = React.useRef(INITIAL_INDEX);
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [isRecording, setIsRecording] = React.useState(false);
   const [navVisible, setNavVisible] = React.useState(true);
@@ -95,15 +101,6 @@ function Main() {
   const dotCenterTop = (SCREEN_HEIGHT - CENTER_DOT_SIZE) / 2;
   const dotCornerLeft = SCREEN_WIDTH - NAV_SIDE_INSET - CORNER_DOT_SIZE;
   const dotCornerTop = insets.top + 14;
-  const dotOpacity = React.useMemo(
-    () =>
-      scrollX.interpolate({
-        inputRange: [0, SCREEN_WIDTH, SCREEN_WIDTH * 2],
-        outputRange: isRecording ? [1, 1, 1] : [0, 1, 0],
-        extrapolate: "clamp",
-      }),
-    [isRecording, scrollX],
-  );
   const dotLeft = React.useMemo(
     () =>
       scrollX.interpolate({
@@ -137,6 +134,14 @@ function Main() {
       }),
     [isRecording, scrollX],
   );
+  const animatedDotLeft = React.useMemo(
+    () => Animated.add(dotLeft, dotBounceX),
+    [dotBounceX, dotLeft],
+  );
+  const animatedDotTop = React.useMemo(
+    () => Animated.add(dotTop, dotBounceY),
+    [dotBounceY, dotTop],
+  );
 
   const animateNavVisibility = React.useCallback(
     (visible: boolean) => {
@@ -166,6 +171,59 @@ function Main() {
       setNavVisible(visible);
     },
     [navHiddenOffset, navTranslateY],
+  );
+
+  const playRecordingDotBounce = React.useCallback(
+    (toRecordPage: boolean) => {
+      dotBounceX.stopAnimation();
+      dotBounceY.stopAnimation();
+      dotBounceScale.stopAnimation();
+
+      const xTarget = toRecordPage ? -DOT_BOUNCE_X : DOT_BOUNCE_X;
+      const yTarget = toRecordPage ? DOT_BOUNCE_Y : -DOT_BOUNCE_Y;
+      const scaleTarget = toRecordPage ? 1.08 : 0.92;
+
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(dotBounceX, {
+            toValue: xTarget,
+            duration: 95,
+            useNativeDriver: false,
+          }),
+          Animated.timing(dotBounceY, {
+            toValue: yTarget,
+            duration: 95,
+            useNativeDriver: false,
+          }),
+          Animated.timing(dotBounceScale, {
+            toValue: scaleTarget,
+            duration: 95,
+            useNativeDriver: false,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.spring(dotBounceX, {
+            toValue: 0,
+            speed: 18,
+            bounciness: 10,
+            useNativeDriver: false,
+          }),
+          Animated.spring(dotBounceY, {
+            toValue: 0,
+            speed: 18,
+            bounciness: 10,
+            useNativeDriver: false,
+          }),
+          Animated.spring(dotBounceScale, {
+            toValue: 1,
+            speed: 18,
+            bounciness: 10,
+            useNativeDriver: false,
+          }),
+        ]),
+      ]).start();
+    },
+    [dotBounceScale, dotBounceX, dotBounceY],
   );
 
   const handleTabPress = React.useCallback(
@@ -210,6 +268,14 @@ function Main() {
     }
   }, [activeIndex, animateNavVisibility, navVisible]);
 
+  React.useEffect(() => {
+    const previousIndex = previousIndexRef.current;
+    if (isRecording && previousIndex !== activeIndex) {
+      playRecordingDotBounce(activeIndex === RECORD_TAB_INDEX);
+    }
+    previousIndexRef.current = activeIndex;
+  }, [activeIndex, isRecording, playRecordingDotBounce]);
+
   const navBarBottom = Math.max(insets.bottom, 14);
 
   const navBarAnimatedStyle = React.useMemo(
@@ -238,20 +304,27 @@ function Main() {
         contentOffset={{ x: INITIAL_INDEX * SCREEN_WIDTH, y: 0 }}
       >
         <View style={styles.page}><SettingsScreen /></View>
-        <View style={styles.page}><HomeScreen onBackgroundPress={handleRecordBackgroundPress} /></View>
+        <View style={styles.page}>
+          <HomeScreen
+            isRecording={isRecording}
+            onBackgroundPress={handleRecordBackgroundPress}
+            onToggleRecording={handleRecordingToggle}
+          />
+        </View>
         <View style={styles.page}><AlertsScreen /></View>
       </ScrollView>
 
       <Animated.View
-        pointerEvents={isRecording || activeIndex === RECORD_TAB_INDEX ? "auto" : "none"}
+        pointerEvents={isRecording ? "auto" : "none"}
         style={[
           styles.recordDotFrame,
           {
-            opacity: dotOpacity,
+            opacity: isRecording ? 1 : 0,
             width: dotSize,
             height: dotSize,
-            left: dotLeft,
-            top: dotTop,
+            left: animatedDotLeft,
+            top: animatedDotTop,
+            transform: [{ scale: dotBounceScale }],
           },
         ]}
       >

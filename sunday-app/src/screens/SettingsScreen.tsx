@@ -5,6 +5,7 @@ import DateTimePicker, {
 import { Picker } from "@react-native-picker/picker";
 import {
   ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -346,6 +347,17 @@ function getTimeZoneOptions() {
   return [...new Set(merged)].sort((left, right) => left.localeCompare(right));
 }
 
+function formatTimeZoneLabel(value: string) {
+  if (value === "UTC") {
+    return "UTC";
+  }
+
+  return value
+    .split("/")
+    .map((segment) => segment.replace(/_/g, " "))
+    .join(" / ");
+}
+
 function getTimeSettingDate(value: string | boolean | undefined) {
   const date = new Date();
   date.setSeconds(0, 0);
@@ -393,6 +405,7 @@ export function SettingsScreen() {
   const [errors, setErrors] = React.useState<string[]>([]);
   const [activeLocationGroupId, setActiveLocationGroupId] = React.useState<LocationSettingGroup["id"] | null>(null);
   const [isTimezonePickerVisible, setIsTimezonePickerVisible] = React.useState(false);
+  const [isTimezonePickerMounted, setIsTimezonePickerMounted] = React.useState(false);
   const [pendingTimezone, setPendingTimezone] = React.useState("");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
@@ -400,6 +413,8 @@ export function SettingsScreen() {
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timezoneBackdropOpacity = React.useRef(new Animated.Value(0)).current;
+  const timezoneSheetTranslateY = React.useRef(new Animated.Value(28)).current;
 
   const loadSettings = React.useCallback(async () => {
     try {
@@ -651,6 +666,10 @@ export function SettingsScreen() {
     [activeLocationGroupId],
   );
   const timeZoneOptions = React.useMemo(() => getTimeZoneOptions(), []);
+  const timeZoneDisplayValue = React.useMemo(
+    () => formatTimeZoneLabel(String(settings.TIMEZONE ?? "") || "America/Chicago"),
+    [settings.TIMEZONE],
+  );
   const headerTopInset = insets.top + 8;
 
   const activePickerCoordinate = React.useMemo(() => {
@@ -666,6 +685,56 @@ export function SettingsScreen() {
 
     return defaultPickerCoordinate(settings);
   }, [activeLocationGroup, settings]);
+
+  React.useEffect(() => {
+    if (isTimezonePickerVisible) {
+      setIsTimezonePickerMounted(true);
+      timezoneBackdropOpacity.stopAnimation();
+      timezoneSheetTranslateY.stopAnimation();
+      Animated.parallel([
+        Animated.timing(timezoneBackdropOpacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.spring(timezoneSheetTranslateY, {
+          toValue: 0,
+          speed: 20,
+          bounciness: 7,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    if (!isTimezonePickerMounted) {
+      return;
+    }
+
+    timezoneBackdropOpacity.stopAnimation();
+    timezoneSheetTranslateY.stopAnimation();
+    Animated.parallel([
+      Animated.timing(timezoneBackdropOpacity, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+      Animated.timing(timezoneSheetTranslateY, {
+        toValue: 20,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setIsTimezonePickerMounted(false);
+      }
+    });
+  }, [
+    isTimezonePickerMounted,
+    isTimezonePickerVisible,
+    timezoneBackdropOpacity,
+    timezoneSheetTranslateY,
+  ]);
 
   if (isLoading) {
     return (
@@ -871,7 +940,7 @@ export function SettingsScreen() {
                           ) : field.key === "TIMEZONE" ? (
                             <Pressable onPress={openTimezonePicker} style={styles.selectTrigger}>
                               <Text numberOfLines={1} style={styles.selectTriggerText}>
-                                {stringValue || field.placeholder || "Select"}
+                                {timeZoneDisplayValue || field.placeholder || "Select"}
                               </Text>
                               <Text style={styles.selectTriggerChevron}>▾</Text>
                             </Pressable>
@@ -942,16 +1011,24 @@ export function SettingsScreen() {
         />
       ) : null}
 
-      {isTimezonePickerVisible ? (
+      {isTimezonePickerMounted ? (
         <Modal
           transparent
-          animationType="slide"
+          animationType="none"
           visible
           onRequestClose={closeTimezonePicker}
         >
-          <View style={styles.sheetOverlay}>
+          <Animated.View style={[styles.sheetOverlay, { opacity: timezoneBackdropOpacity }]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={closeTimezonePicker} />
-            <View style={[styles.sheetPanel, { paddingBottom: insets.bottom + 14 }]}>
+            <Animated.View
+              style={[
+                styles.sheetPanel,
+                {
+                  paddingBottom: insets.bottom + 14,
+                  transform: [{ translateY: timezoneSheetTranslateY }],
+                },
+              ]}
+            >
               <View style={styles.sheetHeader}>
                 <Pressable hitSlop={10} onPress={closeTimezonePicker}>
                   <Text style={styles.sheetActionText}>Cancel</Text>
@@ -971,15 +1048,15 @@ export function SettingsScreen() {
                   {timeZoneOptions.map((option) => (
                     <Picker.Item
                       key={option}
-                      label={option}
+                      label={formatTimeZoneLabel(option)}
                       value={option}
                       color="#ffffff"
                     />
                   ))}
                 </Picker>
               </View>
-            </View>
-          </View>
+            </Animated.View>
+          </Animated.View>
         </Modal>
       ) : null}
     </SafeAreaView>

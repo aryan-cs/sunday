@@ -469,6 +469,10 @@ uv run python main.py
 
 Sunday includes a React Native app (`sunday-app/`) built with Expo Go. It shows today's upcoming events, live travel times by car, bus, and walking, and leave countdowns. It adapts to dark mode automatically.
 
+Important note:
+- the Expo app should usually be started in `tunnel` mode, not plain LAN mode
+- tunnel mode is much more reliable when Expo Go hangs on `Opening project...` or times out fetching the JS bundle
+
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
@@ -522,10 +526,18 @@ Do not use `--reload` together with `--host 0.0.0.0` in production; it is fine f
 In a separate terminal inside `sunday-app/`:
 
 ```bash
-npx expo start
+npm run start
 ```
 
 A QR code will appear in the terminal.
+
+That script uses Expo `tunnel` mode by default.
+
+If you specifically want LAN mode later, use:
+
+```bash
+npm run start:lan
+```
 
 ### 6. Open the app on your iPhone
 
@@ -563,7 +575,14 @@ Push notifications are not supported in Expo Go. They require a standalone build
 **QR code not scanning**
 
 - Try pressing `w` in the Expo terminal to open a browser preview, which confirms the server is up.
-- Restart Expo with `npx expo start --clear`.
+- Restart Expo with `npm run start:clear`.
+
+**Expo Go says "Opening project..." forever or times out**
+
+- Use `npm run start` so Expo starts in `tunnel` mode.
+- Make sure Expo Go is allowed to use Local Network on your iPhone.
+- If you previously started Expo in LAN mode, stop it fully and restart in tunnel mode.
+- The app backend URL in `sunday-app/.env` must still be real. Do not leave placeholder values like `http://192.168.x.x:8000`.
 
 ## How Travel and Calendar Writing Work
 

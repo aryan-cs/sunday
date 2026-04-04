@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "start": "expo start --tunnel",
+    "start:lan": "expo start --lan",
+    "start:clear": "expo start --clear --tunnel",
+    "android": "expo start --android --tunnel",
+    "ios": "expo start --ios --tunnel",
     "web": "expo start --web"
   },
   "dependencies": {

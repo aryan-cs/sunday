@@ -1168,8 +1168,9 @@ const styles = StyleSheet.create({
   },
   locationFieldHeader: {
     flex: 0,
-    width: 56,
-    paddingRight: 10,
+    width: 32,
+    height: 32,
+    paddingRight: 0,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1184,6 +1185,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     borderRadius: 999,
     backgroundColor: PANEL_ALT,
+    marginLeft: 8,
     paddingHorizontal: 13,
     paddingVertical: 9,
     justifyContent: "center",
@@ -1192,7 +1194,7 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontFamily: FONTS.regular,
     fontSize: 14,
-    textAlign: "right",
+    textAlign: "left",
   },
   locationValuePlaceholder: {
     color: "#6f6f6f",

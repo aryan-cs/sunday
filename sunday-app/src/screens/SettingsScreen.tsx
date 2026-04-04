@@ -39,6 +39,13 @@ const AUTOSAVE_DELAY_MS = 500;
 const SETTINGS_RETRY_DELAY_MS = 2000;
 const TIME_SETTING_KEYS = ["WORKDAY_START_TIME", "WORKDAY_END_TIME"] as const;
 type TimeSettingKey = (typeof TIME_SETTING_KEYS)[number];
+const NUMERIC_PICKER_KEYS = [
+  "PREP_TIME_MINUTES",
+  "ONLINE_PREP_MINUTES",
+  "POLL_INTERVAL_SECONDS",
+  "MAX_EMAILS_PER_CYCLE",
+] as const;
+type NumericPickerKey = (typeof NUMERIC_PICKER_KEYS)[number];
 const DEFAULT_TIMEZONE_OPTIONS = [
   "America/Chicago",
   "America/New_York",
@@ -79,6 +86,15 @@ const WORKDAY_OPTIONS = [
   { label: "F", value: "fri" },
   { label: "Sa", value: "sat" },
 ] as const;
+const NUMERIC_PICKER_CONFIG: Record<
+  NumericPickerKey,
+  { min: number; max: number; step: number }
+> = {
+  PREP_TIME_MINUTES: { min: 0, max: 120, step: 1 },
+  ONLINE_PREP_MINUTES: { min: 0, max: 120, step: 1 },
+  POLL_INTERVAL_SECONDS: { min: 1, max: 300, step: 1 },
+  MAX_EMAILS_PER_CYCLE: { min: 1, max: 20, step: 1 },
+};
 
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select";
 
@@ -104,6 +120,12 @@ type LocationSettingGroup = {
   latitudeKey: string;
   longitudeKey: string;
   placeholder: string;
+};
+
+type WheelPickerField = {
+  key: string;
+  title: string;
+  options: string[];
 };
 
 const LOCATION_SETTING_GROUPS: LocationSettingGroup[] = [
@@ -287,6 +309,10 @@ function isTimeSettingKey(value: string): value is TimeSettingKey {
   return (TIME_SETTING_KEYS as readonly string[]).includes(value);
 }
 
+function isNumericPickerKey(value: string): value is NumericPickerKey {
+  return (NUMERIC_PICKER_KEYS as readonly string[]).includes(value);
+}
+
 function parseWorkDays(value: string | boolean | undefined) {
   if (typeof value !== "string") {
     return new Set<string>();
@@ -311,6 +337,24 @@ function getTimeZoneOptions() {
     typeof supportedValuesOf === "function" ? supportedValuesOf("timeZone") : [];
   const merged = [...DEFAULT_TIMEZONE_OPTIONS, ...dynamicOptions];
   return [...new Set(merged)].sort((left, right) => left.localeCompare(right));
+}
+
+function getNumericPickerOptions(key: NumericPickerKey, currentValue: string | boolean | undefined) {
+  const config = NUMERIC_PICKER_CONFIG[key];
+  const options: string[] = [];
+  for (let value = config.min; value <= config.max; value += config.step) {
+    options.push(String(value));
+  }
+
+  if (typeof currentValue === "string" && currentValue.trim()) {
+    const trimmed = currentValue.trim();
+    if (!options.includes(trimmed)) {
+      options.push(trimmed);
+      options.sort((left, right) => Number(left) - Number(right));
+    }
+  }
+
+  return options;
 }
 
 function getTimeSettingDate(value: string | boolean | undefined) {
@@ -358,8 +402,8 @@ export function SettingsScreen() {
   const [warnings, setWarnings] = React.useState<string[]>([]);
   const [errors, setErrors] = React.useState<string[]>([]);
   const [activeLocationGroupId, setActiveLocationGroupId] = React.useState<LocationSettingGroup["id"] | null>(null);
-  const [isTimezonePickerVisible, setIsTimezonePickerVisible] = React.useState(false);
-  const [pendingTimezone, setPendingTimezone] = React.useState("");
+  const [activeWheelPickerField, setActiveWheelPickerField] = React.useState<WheelPickerField | null>(null);
+  const [pendingWheelValue, setPendingWheelValue] = React.useState("");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
   const saveSequenceRef = React.useRef(0);
@@ -477,19 +521,25 @@ export function SettingsScreen() {
     [],
   );
 
-  const openTimezonePicker = React.useCallback(() => {
-    setPendingTimezone(String(settings.TIMEZONE ?? "") || "America/Chicago");
-    setIsTimezonePickerVisible(true);
-  }, [settings.TIMEZONE]);
+  const openWheelPicker = React.useCallback(
+    (field: WheelPickerField, initialValue: string) => {
+      setActiveWheelPickerField(field);
+      setPendingWheelValue(initialValue || field.options[0] || "");
+    },
+    [],
+  );
 
-  const closeTimezonePicker = React.useCallback(() => {
-    setIsTimezonePickerVisible(false);
+  const closeWheelPicker = React.useCallback(() => {
+    setActiveWheelPickerField(null);
   }, []);
 
-  const confirmTimezonePicker = React.useCallback(() => {
-    handleTextChange("TIMEZONE", pendingTimezone || "America/Chicago");
-    setIsTimezonePickerVisible(false);
-  }, [handleTextChange, pendingTimezone]);
+  const confirmWheelPicker = React.useCallback(() => {
+    if (!activeWheelPickerField) {
+      return;
+    }
+    handleTextChange(activeWheelPickerField.key, pendingWheelValue || activeWheelPickerField.options[0] || "");
+    setActiveWheelPickerField(null);
+  }, [activeWheelPickerField, handleTextChange, pendingWheelValue]);
 
   React.useEffect(() => {
     if (isLoading || !hasLoadedSettingsRef.current) {
@@ -659,6 +709,7 @@ export function SettingsScreen() {
                         style={[
                           styles.fieldRow,
                           (field.kind === "boolean" ||
+                            isNumericPickerKey(field.key) ||
                             isTimeSettingKey(field.key) ||
                             field.key === "TIMEZONE") &&
                             styles.fieldRowInline,
@@ -669,6 +720,7 @@ export function SettingsScreen() {
                           style={[
                             styles.fieldHeader,
                             (field.kind === "boolean" ||
+                              isNumericPickerKey(field.key) ||
                               isTimeSettingKey(field.key) ||
                               field.key === "TIMEZONE") &&
                               styles.fieldHeaderInline,
@@ -759,31 +811,48 @@ export function SettingsScreen() {
                             })}
                           </View>
                         ) : field.key === "TIMEZONE" ? (
-                          <Pressable onPress={openTimezonePicker} style={styles.selectTrigger}>
+                          <Pressable
+                            onPress={() =>
+                              openWheelPicker(
+                                {
+                                  key: field.key,
+                                  title: field.label,
+                                  options: timeZoneOptions,
+                                },
+                                stringValue || "America/Chicago",
+                              )
+                            }
+                            style={styles.selectTrigger}
+                          >
                             <Text numberOfLines={1} style={styles.selectTriggerText}>
                               {stringValue || field.placeholder || "Select"}
                             </Text>
                             <Text style={styles.selectTriggerChevron}>▾</Text>
                           </Pressable>
-                        ) : field.kind === "select" ? (
-                          <View style={styles.selectField}>
-                            <Picker
-                              selectedValue={stringValue || field.placeholder || ""}
-                              onValueChange={(value) => handleTextChange(field.key, String(value))}
-                              dropdownIconColor="#8b8b8b"
-                              itemStyle={styles.selectItem}
-                              style={styles.selectPicker}
-                            >
-                              {(field.options ?? []).map((option) => (
-                                <Picker.Item
-                                  key={option}
-                                  label={option}
-                                  value={option}
-                                  color="#ffffff"
-                                />
-                              ))}
-                            </Picker>
-                          </View>
+                        ) : isNumericPickerKey(field.key) ? (
+                          (() => {
+                            const numericKey = field.key;
+                            return (
+                              <Pressable
+                                onPress={() =>
+                                  openWheelPicker(
+                                    {
+                                      key: numericKey,
+                                      title: field.label,
+                                      options: getNumericPickerOptions(numericKey, rawValue),
+                                    },
+                                    stringValue,
+                                  )
+                                }
+                                style={[styles.selectTrigger, styles.numericSelectTrigger]}
+                              >
+                                <Text numberOfLines={1} style={styles.numericSelectTriggerText}>
+                                  {stringValue || "0"}
+                                </Text>
+                                <Text style={styles.selectTriggerChevron}>▾</Text>
+                              </Pressable>
+                            );
+                          })()
                         ) : (
                           <TextInput
                             autoCapitalize="none"
@@ -829,33 +898,33 @@ export function SettingsScreen() {
         />
       ) : null}
 
-      {isTimezonePickerVisible ? (
+      {activeWheelPickerField ? (
         <Modal
           transparent
           animationType="slide"
           visible
-          onRequestClose={closeTimezonePicker}
+          onRequestClose={closeWheelPicker}
         >
           <View style={styles.sheetOverlay}>
-            <Pressable style={StyleSheet.absoluteFill} onPress={closeTimezonePicker} />
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeWheelPicker} />
             <View style={[styles.sheetPanel, { paddingBottom: insets.bottom + 14 }]}>
               <View style={styles.sheetHeader}>
-                <Pressable hitSlop={10} onPress={closeTimezonePicker}>
+                <Pressable hitSlop={10} onPress={closeWheelPicker}>
                   <Text style={styles.sheetActionText}>Cancel</Text>
                 </Pressable>
-                <Text style={styles.sheetTitle}>Time Zone</Text>
-                <Pressable hitSlop={10} onPress={confirmTimezonePicker}>
+                <Text style={styles.sheetTitle}>{activeWheelPickerField.title}</Text>
+                <Pressable hitSlop={10} onPress={confirmWheelPicker}>
                   <Text style={styles.sheetActionText}>Done</Text>
                 </Pressable>
               </View>
               <View style={styles.sheetPickerWrap}>
                 <Picker
-                  selectedValue={pendingTimezone}
-                  onValueChange={(value) => setPendingTimezone(String(value))}
+                  selectedValue={pendingWheelValue}
+                  onValueChange={(value) => setPendingWheelValue(String(value))}
                   itemStyle={styles.sheetPickerItem}
                   style={styles.sheetPicker}
                 >
-                  {timeZoneOptions.map((option) => (
+                  {activeWheelPickerField.options.map((option) => (
                     <Picker.Item
                       key={option}
                       label={option}
@@ -1007,22 +1076,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.semibold,
     fontSize: 14,
   },
-  selectField: {
-    minHeight: Platform.OS === "ios" ? 176 : 54,
-    borderRadius: 14,
-    backgroundColor: PANEL_ALT,
-    overflow: "hidden",
-  },
-  selectPicker: {
-    color: "#ffffff",
-    height: Platform.OS === "ios" ? 176 : 54,
-    marginHorizontal: Platform.OS === "ios" ? -8 : 0,
-  },
-  selectItem: {
-    color: "#ffffff",
-    fontFamily: FONTS.regular,
-    fontSize: 16,
-  },
   selectTrigger: {
     minHeight: 44,
     maxWidth: 176,
@@ -1045,6 +1098,18 @@ const styles = StyleSheet.create({
     color: MUTED,
     fontFamily: FONTS.semibold,
     fontSize: 16,
+  },
+  numericSelectTrigger: {
+    minWidth: 88,
+    maxWidth: 108,
+    justifyContent: "flex-end",
+  },
+  numericSelectTriggerText: {
+    flex: 1,
+    color: "#ffffff",
+    fontFamily: FONTS.regular,
+    fontSize: 15,
+    textAlign: "right",
   },
   choiceRow: {
     flexDirection: "row",

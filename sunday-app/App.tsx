@@ -8,6 +8,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
@@ -221,6 +222,10 @@ function Main() {
     );
   }, []);
 
+  const handleDeleteAlert = React.useCallback((entryId: string) => {
+    setAlertEntries((current) => current.filter((entry) => entry.id !== entryId));
+  }, []);
+
   React.useEffect(() => {
     if (activeIndex !== RECORD_TAB_INDEX && !navVisible) {
       animateNavVisibility(true);
@@ -272,7 +277,9 @@ function Main() {
             onRecordingChange={setIsRecordingActive}
           />
         </View>
-        <View style={styles.page}><AlertsScreen entries={alertEntries} /></View>
+        <View style={styles.page}>
+          <AlertsScreen entries={alertEntries} onDeleteEntry={handleDeleteAlert} />
+        </View>
       </ScrollView>
 
       {/* Bottom Nav */}
@@ -357,13 +364,18 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <Main />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={styles.gestureRoot}>
+      <SafeAreaProvider>
+        <Main />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   root: {
     flex: 1,
     backgroundColor: BACKGROUND,

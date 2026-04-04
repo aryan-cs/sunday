@@ -1,6 +1,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Pressable,
   StatusBar,
@@ -8,12 +9,15 @@ import {
   Text,
   View,
 } from "react-native";
+import Swipeable from "react-native-gesture-handler/Swipeable";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Path } from "react-native-svg";
 import { FONTS } from "../constants/fonts";
 
 const BACKGROUND = "#121212";
 const CARD = "#242424";
 const EMPTY = "#8b8b8b";
+const DELETE = "#eb4034";
 
 export type AlertEntry = {
   id: string;
@@ -25,7 +29,47 @@ export type AlertEntry = {
 
 type AlertsScreenProps = {
   entries: AlertEntry[];
+  onDeleteEntry?: (entryId: string) => void;
 };
+
+function TrashIcon({ size = 20, color = "#ffffff" }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M5 7H19"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M10 11V17"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M14 11V17"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M8 7L9 5H15L16 7"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M18 7L17.2 18.2C17.14 19.04 16.44 19.69 15.59 19.69H8.41C7.56 19.69 6.86 19.04 6.8 18.2L6 7"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
 
 function formatTimestamp(isoString: string) {
   const date = new Date(isoString);
@@ -46,9 +90,31 @@ function renderEmptyState() {
   );
 }
 
-export function AlertsScreen({ entries }: AlertsScreenProps) {
+export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
   const insets = useSafeAreaInsets();
   const listHeaderHeight = insets.top + 8;
+
+  const renderRightActions = React.useCallback(
+    (item: AlertEntry, progress: Animated.AnimatedInterpolation<number>) => {
+      const opacity = progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.4, 1],
+        extrapolate: "clamp",
+      });
+
+      return (
+        <Animated.View style={[styles.deleteActionWrap, { opacity }]}>
+          <Pressable
+            onPress={() => onDeleteEntry?.(item.id)}
+            style={styles.deleteAction}
+          >
+            <TrashIcon />
+          </Pressable>
+        </Animated.View>
+      );
+    },
+    [onDeleteEntry],
+  );
 
   return (
     <SafeAreaView edges={["left", "right"]} style={styles.safe}>
@@ -62,26 +128,34 @@ export function AlertsScreen({ entries }: AlertsScreenProps) {
         alwaysBounceVertical
         contentInsetAdjustmentBehavior="never"
         showsVerticalScrollIndicator={false}
+        ItemSeparatorComponent={() => <View style={styles.rowSeparator} />}
         ListHeaderComponent={entries.length ? <View style={{ height: listHeaderHeight }} /> : null}
         ListEmptyComponent={renderEmptyState}
         renderItem={({ item }) => (
-          <Pressable style={styles.card}>
-            <View style={styles.cardMain}>
-              {item.status === "pending" ? (
-                <ActivityIndicator
-                  size="small"
-                  color="#ffffff"
-                  style={styles.loadingSpinner}
-                />
-              ) : null}
-              <View style={styles.cardText}>
-                <Text style={styles.summary}>
-                  {item.status === "pending" ? "Transcription loading..." : item.summary}
-                </Text>
+          <Swipeable
+            friction={1.8}
+            overshootRight={false}
+            rightThreshold={36}
+            renderRightActions={(progress) => renderRightActions(item, progress)}
+          >
+            <Pressable style={styles.card}>
+              <View style={styles.cardMain}>
+                {item.status === "pending" ? (
+                  <ActivityIndicator
+                    size="small"
+                    color="#ffffff"
+                    style={styles.loadingSpinner}
+                  />
+                ) : null}
+                <View style={styles.cardText}>
+                  <Text style={styles.summary}>
+                    {item.status === "pending" ? "Transcription loading..." : item.summary}
+                  </Text>
+                </View>
               </View>
-            </View>
-            <Text style={styles.timestamp}>{formatTimestamp(item.createdAt)}</Text>
-          </Pressable>
+              <Text style={styles.timestamp}>{formatTimestamp(item.createdAt)}</Text>
+            </Pressable>
+          </Swipeable>
         )}
       />
     </SafeAreaView>
@@ -97,7 +171,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 18,
     paddingBottom: 120,
-    gap: 12,
   },
   emptyContent: {
     flexGrow: 1,
@@ -155,5 +228,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: FONTS.medium,
     textAlign: "right",
+  },
+  rowSeparator: {
+    height: 12,
+  },
+  deleteActionWrap: {
+    width: 88,
+    paddingLeft: 10,
+  },
+  deleteAction: {
+    flex: 1,
+    borderRadius: 18,
+    backgroundColor: DELETE,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

@@ -63,6 +63,15 @@ const DEFAULT_TIMEZONE_OPTIONS = [
   "Pacific/Auckland",
   "UTC",
 ] as const;
+const WORKDAY_OPTIONS = [
+  { label: "M", value: "mon" },
+  { label: "T", value: "tue" },
+  { label: "W", value: "wed" },
+  { label: "Th", value: "thu" },
+  { label: "F", value: "fri" },
+  { label: "Sa", value: "sat" },
+  { label: "Su", value: "sun" },
+] as const;
 
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select";
 
@@ -157,7 +166,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       {
         key: "WORK_DAYS",
         label: "Work days",
-        description: "Comma-separated: mon,tue,wed,thu,fri",
+        description: "Tap the days when work-hours logic should apply.",
         kind: "text",
       },
       {
@@ -269,6 +278,19 @@ function defaultPickerCoordinate(settings: AppSettingsValues) {
 
 function isTimeSettingKey(value: string): value is TimeSettingKey {
   return (TIME_SETTING_KEYS as readonly string[]).includes(value);
+}
+
+function parseWorkDays(value: string | boolean | undefined) {
+  if (typeof value !== "string") {
+    return new Set<string>();
+  }
+
+  return new Set(
+    value
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  );
 }
 
 function getTimeZoneOptions() {
@@ -431,6 +453,27 @@ export function SettingsScreen() {
       ...current,
       [key]: value,
     }));
+  }, []);
+
+  const handleWorkDayToggle = React.useCallback((day: (typeof WORKDAY_OPTIONS)[number]["value"]) => {
+    setSettings((current) => {
+      const nextDays = parseWorkDays(current.WORK_DAYS);
+      if (nextDays.has(day)) {
+        nextDays.delete(day);
+      } else {
+        nextDays.add(day);
+      }
+
+      const serialized = WORKDAY_OPTIONS
+        .map((option) => option.value)
+        .filter((value) => nextDays.has(value))
+        .join(",");
+
+      return {
+        ...current,
+        WORK_DAYS: serialized,
+      };
+    });
   }, []);
 
   const handleLocationSelected = React.useCallback(
@@ -657,6 +700,31 @@ export function SettingsScreen() {
                             trackColor={{ false: "#3a3a3a", true: "#4f4f4f" }}
                             thumbColor={boolValue ? "#ffffff" : "#d6d6d6"}
                           />
+                        ) : field.key === "WORK_DAYS" ? (
+                          <View style={styles.workdayRow}>
+                            {WORKDAY_OPTIONS.map((option) => {
+                              const selected = parseWorkDays(stringValue).has(option.value);
+                              return (
+                                <Pressable
+                                  key={option.value}
+                                  onPress={() => handleWorkDayToggle(option.value)}
+                                  style={[
+                                    styles.workdayButton,
+                                    selected && styles.workdayButtonSelected,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.workdayButtonText,
+                                      selected && styles.workdayButtonTextSelected,
+                                    ]}
+                                  >
+                                    {option.label}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
                         ) : field.kind === "choice" ? (
                           <View style={styles.choiceRow}>
                             {field.options?.map((option) => {
@@ -919,6 +987,31 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+  },
+  workdayRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  workdayButton: {
+    minWidth: 44,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: PANEL_ALT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  workdayButtonSelected: {
+    backgroundColor: ACCENT,
+  },
+  workdayButtonText: {
+    color: "#ffffff",
+    fontFamily: FONTS.semibold,
+    fontSize: 14,
+  },
+  workdayButtonTextSelected: {
+    color: BACKGROUND,
   },
   choiceChip: {
     borderRadius: 999,

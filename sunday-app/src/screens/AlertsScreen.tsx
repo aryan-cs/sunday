@@ -32,6 +32,11 @@ type AlertsScreenProps = {
   onDeleteEntry?: (entryId: string) => void;
 };
 
+type AlertRowProps = {
+  item: AlertEntry;
+  onDeleteEntry?: (entryId: string) => void;
+};
+
 function TrashIcon({ size = 20, color = "#ffffff" }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 -960 960 960" fill="none">
@@ -62,13 +67,29 @@ function renderEmptyState() {
   );
 }
 
-export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
-  const insets = useSafeAreaInsets();
-  const headerTopInset = insets.top + 8;
+function AlertRow({ item, onDeleteEntry }: AlertRowProps) {
+  const closeBounceX = React.useRef(new Animated.Value(0)).current;
+
+  const handleSwipeableClose = React.useCallback(() => {
+    closeBounceX.stopAnimation();
+    closeBounceX.setValue(0);
+    Animated.sequence([
+      Animated.timing(closeBounceX, {
+        toValue: 8,
+        duration: 90,
+        useNativeDriver: true,
+      }),
+      Animated.spring(closeBounceX, {
+        toValue: 0,
+        speed: 18,
+        bounciness: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [closeBounceX]);
 
   const renderRightActions = React.useCallback(
     (
-      item: AlertEntry,
       progress: Animated.AnimatedInterpolation<number>,
       dragX: Animated.AnimatedInterpolation<number>,
     ) => {
@@ -99,8 +120,51 @@ export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
         </Animated.View>
       );
     },
-    [onDeleteEntry],
+    [item.id, onDeleteEntry],
   );
+
+  return (
+    <View style={styles.rowWrap}>
+      <Animated.View style={{ transform: [{ translateX: closeBounceX }] }}>
+        <Swipeable
+          friction={1.25}
+          overshootRight
+          overshootFriction={6}
+          rightThreshold={30}
+          containerStyle={styles.swipeableContainer}
+          childrenContainerStyle={styles.swipeableChildren}
+          onSwipeableClose={handleSwipeableClose}
+          renderRightActions={renderRightActions}
+        >
+          <Pressable style={styles.card}>
+            <View style={styles.cardMain}>
+              {item.status === "pending" ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#ffffff"
+                  style={styles.loadingSpinner}
+                />
+              ) : null}
+              <View style={styles.cardText}>
+                <Text style={styles.summary}>
+                  {item.status === "pending" ? "Transcription loading..." : item.summary}
+                </Text>
+                {item.status === "failed" && item.transcript ? (
+                  <Text style={styles.failureBody}>{item.transcript}</Text>
+                ) : null}
+              </View>
+            </View>
+            <Text style={styles.timestamp}>{formatTimestamp(item.createdAt)}</Text>
+          </Pressable>
+        </Swipeable>
+      </Animated.View>
+    </View>
+  );
+}
+
+export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
+  const insets = useSafeAreaInsets();
+  const headerTopInset = insets.top + 8;
 
   return (
     <SafeAreaView edges={[]} style={styles.safe}>
@@ -123,38 +187,7 @@ export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
         )}
         ListEmptyComponent={renderEmptyState}
         renderItem={({ item }) => (
-          <View style={styles.rowWrap}>
-            <Swipeable
-              friction={1.25}
-              overshootRight
-              overshootFriction={6}
-              rightThreshold={30}
-              containerStyle={styles.swipeableContainer}
-              childrenContainerStyle={styles.swipeableChildren}
-              renderRightActions={(progress, dragX) => renderRightActions(item, progress, dragX)}
-            >
-              <Pressable style={styles.card}>
-                <View style={styles.cardMain}>
-                  {item.status === "pending" ? (
-                    <ActivityIndicator
-                      size="small"
-                      color="#ffffff"
-                      style={styles.loadingSpinner}
-                    />
-                  ) : null}
-                  <View style={styles.cardText}>
-                    <Text style={styles.summary}>
-                      {item.status === "pending" ? "Transcription loading..." : item.summary}
-                    </Text>
-                    {item.status === "failed" && item.transcript ? (
-                      <Text style={styles.failureBody}>{item.transcript}</Text>
-                    ) : null}
-                  </View>
-                </View>
-                <Text style={styles.timestamp}>{formatTimestamp(item.createdAt)}</Text>
-              </Pressable>
-            </Swipeable>
-          </View>
+          <AlertRow item={item} onDeleteEntry={onDeleteEntry} />
         )}
       />
     </SafeAreaView>

@@ -31,6 +31,7 @@ const BORDER = "#323232";
 const MUTED = "#8b8b8b";
 const ACCENT = "#ffffff";
 const AUTOSAVE_DELAY_MS = 500;
+const SETTINGS_RETRY_DELAY_MS = 2000;
 const TIME_SETTING_KEYS = ["WORKDAY_START_TIME", "WORKDAY_END_TIME"] as const;
 type TimeSettingKey = (typeof TIME_SETTING_KEYS)[number];
 const DEFAULT_TIMEZONE_OPTIONS = [
@@ -384,12 +385,15 @@ export function SettingsScreen() {
   const saveSequenceRef = React.useRef(0);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadSettings = React.useCallback(async () => {
-    setIsLoading(true);
-    setErrorMessage(null);
     try {
       const response = await fetchAppSettings();
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
       setSettings((current) => {
         const nextSettings = { ...current, ...response.settings };
         lastSavedSettingsRef.current = serializeSettings(nextSettings);
@@ -402,10 +406,18 @@ export function SettingsScreen() {
       });
       setWarnings(response.warnings);
       setErrors(response.errors);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load settings.");
-    } finally {
       setIsLoading(false);
+    } catch (error) {
+      console.warn(
+        "[sunday] settings load failed, retrying...",
+        error instanceof Error ? error.message : error,
+      );
+      if (!retryTimeoutRef.current) {
+        retryTimeoutRef.current = setTimeout(() => {
+          retryTimeoutRef.current = null;
+          void loadSettings();
+        }, SETTINGS_RETRY_DELAY_MS);
+      }
     }
   }, []);
 
@@ -420,6 +432,9 @@ export function SettingsScreen() {
       }
       if (statusTimeoutRef.current) {
         clearTimeout(statusTimeoutRef.current);
+      }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
       }
     };
   }, []);
@@ -601,23 +616,6 @@ export function SettingsScreen() {
           <View style={styles.loadingState}>
             <ActivityIndicator color="#ffffff" />
             <Text style={styles.loadingText}>Loading settings…</Text>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (errorMessage && !hasLoadedSettingsRef.current) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.loadingScreen}>
-          <View style={styles.loadingState}>
-            <Text style={styles.errorTitle}>Couldn&apos;t load settings</Text>
-            <Text style={styles.errorTextCentered}>{errorMessage}</Text>
-            <Pressable onPress={() => void loadSettings()} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Try again</Text>
-            </Pressable>
           </View>
         </View>
       </SafeAreaView>
@@ -900,12 +898,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 24,
   },
-  errorTitle: {
-    color: "#ffffff",
-    fontSize: 22,
-    fontFamily: FONTS.semibold,
-    textAlign: "center",
-  },
   loadingText: {
     color: MUTED,
     fontFamily: FONTS.medium,
@@ -1079,24 +1071,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.medium,
     fontSize: 14,
     lineHeight: 20,
-  },
-  errorTextCentered: {
-    color: "#ff7b72",
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  retryButton: {
-    borderRadius: 999,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-  },
-  retryButtonText: {
-    color: BACKGROUND,
-    fontFamily: FONTS.semibold,
-    fontSize: 14,
   },
   validationText: {
     color: "#ff9d57",

@@ -29,8 +29,7 @@
         }
       ],
       "expo-notifications",
-      "expo-location",
-      "expo-video"
+      "expo-location"
     ],
     "android": {
       "adaptiveIcon": {

@@ -38,6 +38,7 @@ export function HomeScreen({
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
   const [isTogglingRecording, setIsTogglingRecording] = React.useState(false);
+  const recordingStartedAtRef = React.useRef<number | null>(null);
   const scale = React.useRef(new Animated.Value(1)).current;
   const isRecording = recorderState.isRecording;
 
@@ -95,6 +96,7 @@ export function HomeScreen({
       });
       await recorder.prepareToRecordAsync();
       recorder.record();
+      recordingStartedAtRef.current = Date.now();
       console.log("[sunday] recording started");
     } finally {
       setIsTogglingRecording(false);
@@ -104,15 +106,25 @@ export function HomeScreen({
   const stopRecording = React.useCallback(async () => {
     setIsTogglingRecording(true);
     try {
+      const liveStatus = recorder.getStatus();
+      const wallClockDurationMillis = recordingStartedAtRef.current
+        ? Math.max(0, Date.now() - recordingStartedAtRef.current)
+        : 0;
+      const liveDurationMillis = Math.max(
+        recorderState.durationMillis ?? 0,
+        liveStatus.durationMillis ?? 0,
+        wallClockDurationMillis,
+      );
       await recorder.stop();
       await setAudioModeAsync({
         allowsRecording: false,
       });
       const finalStatus = recorder.getStatus();
       const durationMillis = Math.max(
-        recorderState.durationMillis ?? 0,
+        liveDurationMillis,
         finalStatus.durationMillis ?? 0,
       );
+      recordingStartedAtRef.current = null;
       if (durationMillis < MIN_RECORDING_DURATION_MILLIS) {
         console.log(
           `[sunday] recording ignored (${durationMillis}ms is below ${MIN_RECORDING_DURATION_MILLIS}ms)`,
@@ -134,9 +146,10 @@ export function HomeScreen({
     } catch (error) {
       console.error("[sunday] failed to stop recording", error);
     } finally {
+      recordingStartedAtRef.current = null;
       setIsTogglingRecording(false);
     }
-  }, [onTranscriptPending, recorder, recorderState.url, transcribeRecording]);
+  }, [onTranscriptPending, recorder, recorderState.durationMillis, recorderState.url, transcribeRecording]);
 
   const handleDotPress = React.useCallback(async (event?: GestureResponderEvent) => {
     event?.stopPropagation?.();

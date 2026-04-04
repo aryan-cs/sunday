@@ -64,7 +64,7 @@ function renderEmptyState() {
 
 export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
   const insets = useSafeAreaInsets();
-  const listHeaderHeight = insets.top + 8;
+  const headerTopInset = insets.top + 8;
 
   const renderRightActions = React.useCallback(
     (item: AlertEntry, progress: Animated.AnimatedInterpolation<number>) => {
@@ -101,7 +101,11 @@ export function AlertsScreen({ entries, onDeleteEntry }: AlertsScreenProps) {
         contentInsetAdjustmentBehavior="never"
         showsVerticalScrollIndicator={false}
         ItemSeparatorComponent={() => <View style={styles.rowSeparator} />}
-        ListHeaderComponent={entries.length ? <View style={{ height: listHeaderHeight }} /> : null}
+        ListHeaderComponent={(
+          <View style={[styles.header, { paddingTop: headerTopInset }]}>
+            <Text style={styles.headerTitle}>Entries</Text>
+          </View>
+        )}
         ListEmptyComponent={renderEmptyState}
         renderItem={({ item }) => (
           <Swipeable
@@ -146,7 +150,16 @@ const styles = StyleSheet.create({
   },
   emptyContent: {
     flexGrow: 1,
-    paddingHorizontal: 28,
+    paddingHorizontal: 18,
+    paddingBottom: 120,
+  },
+  header: {
+    paddingBottom: 18,
+  },
+  headerTitle: {
+    color: "#ffffff",
+    fontSize: 28,
+    fontFamily: FONTS.semibold,
   },
   emptyState: {
     flex: 1,

@@ -11,8 +11,9 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
-import { AlertsScreen } from "./src/screens/AlertsScreen";
+import { AlertEntry, AlertsScreen } from "./src/screens/AlertsScreen";
 import { SettingsIcon, RecordIcon, AlertIcon } from "./src/components/NavIcons";
+import { summarizeTranscript } from "./src/lib/transcriptSummary";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const BACKGROUND = "#121212";
@@ -62,6 +63,7 @@ function Main() {
   const navTranslateY = React.useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
+  const [alertEntries, setAlertEntries] = React.useState<AlertEntry[]>([]);
   const indicatorTranslateX = React.useMemo(
     () =>
       scrollX.interpolate({
@@ -148,6 +150,17 @@ function Main() {
     animateNavVisibility(!navVisible);
   }, [activeIndex, animateNavVisibility, navVisible]);
 
+  const handleTranscript = React.useCallback((transcript: string) => {
+    const createdAt = new Date().toISOString();
+    const entry: AlertEntry = {
+      id: `${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+      transcript,
+      summary: summarizeTranscript(transcript),
+      createdAt,
+    };
+    setAlertEntries((current) => [entry, ...current]);
+  }, []);
+
   React.useEffect(() => {
     if (activeIndex !== RECORD_TAB_INDEX && !navVisible) {
       animateNavVisibility(true);
@@ -182,8 +195,13 @@ function Main() {
         contentOffset={{ x: INITIAL_INDEX * SCREEN_WIDTH, y: 0 }}
       >
         <View style={styles.page}><SettingsScreen /></View>
-        <View style={styles.page}><HomeScreen onBackgroundPress={handleRecordBackgroundPress} /></View>
-        <View style={styles.page}><AlertsScreen /></View>
+        <View style={styles.page}>
+          <HomeScreen
+            onBackgroundPress={handleRecordBackgroundPress}
+            onTranscript={handleTranscript}
+          />
+        </View>
+        <View style={styles.page}><AlertsScreen entries={alertEntries} /></View>
       </ScrollView>
 
       {/* Bottom Nav */}

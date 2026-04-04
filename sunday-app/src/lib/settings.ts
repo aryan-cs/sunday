@@ -1,6 +1,6 @@
-const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+import { fetchApi } from "./api";
+
 const API_TOKEN = (process.env.EXPO_PUBLIC_API_TOKEN ?? "").trim();
-const SETTINGS_REQUEST_TIMEOUT_MS = 8000;
 
 export type AppSettingsValues = Record<string, string | boolean>;
 
@@ -26,29 +26,6 @@ function buildHeaders() {
   return headers;
 }
 
-async function fetchWithTimeout(
-  input: string,
-  init: RequestInit,
-  timeoutMs = SETTINGS_REQUEST_TIMEOUT_MS,
-) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("Request timed out. Check that the Sunday backend is reachable.");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
 async function parseResponse(response: Response): Promise<AppSettingsResponse> {
   const payload = (await response.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
     detail?: string;
@@ -64,11 +41,7 @@ async function parseResponse(response: Response): Promise<AppSettingsResponse> {
 }
 
 export async function fetchAppSettings(): Promise<AppSettingsResponse> {
-  if (!API_BASE_URL) {
-    throw new Error("EXPO_PUBLIC_API_BASE_URL is not configured.");
-  }
-
-  const response = await fetchWithTimeout(`${API_BASE_URL}/api/settings`, {
+  const response = await fetchApi("/api/settings", {
     method: "GET",
     headers: buildHeaders(),
   });
@@ -77,11 +50,7 @@ export async function fetchAppSettings(): Promise<AppSettingsResponse> {
 }
 
 export async function saveAppSettings(settings: AppSettingsValues): Promise<AppSettingsResponse> {
-  if (!API_BASE_URL) {
-    throw new Error("EXPO_PUBLIC_API_BASE_URL is not configured.");
-  }
-
-  const response = await fetchWithTimeout(`${API_BASE_URL}/api/settings`, {
+  const response = await fetchApi("/api/settings", {
     method: "PUT",
     headers: buildHeaders(),
     body: JSON.stringify({ settings }),
@@ -94,11 +63,7 @@ export async function reverseGeocodeLocation(
   latitude: number,
   longitude: number,
 ): Promise<ReverseGeocodeResponse> {
-  if (!API_BASE_URL) {
-    throw new Error("EXPO_PUBLIC_API_BASE_URL is not configured.");
-  }
-
-  const response = await fetchWithTimeout(`${API_BASE_URL}/api/settings/reverse-geocode`, {
+  const response = await fetchApi("/api/settings/reverse-geocode", {
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify({ latitude, longitude }),

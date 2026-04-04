@@ -16,7 +16,8 @@
     },
     "plugins": [
       "expo-font",
-      "expo-audio"
+      "expo-audio",
+      "@react-native-community/datetimepicker"
     ],
     "android": {
       "adaptiveIcon": {

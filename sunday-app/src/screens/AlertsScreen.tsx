@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { FONTS } from "../constants/fonts";
 
 const BACKGROUND = "#121212";
@@ -48,8 +48,11 @@ function renderEmptyState() {
 }
 
 export function AlertsScreen({ entries }: AlertsScreenProps) {
+  const insets = useSafeAreaInsets();
+  const listHeaderHeight = insets.top + 8;
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView edges={["left", "right"]} style={styles.safe}>
       <StatusBar barStyle="light-content" />
       <FlatList
         data={entries}
@@ -58,7 +61,9 @@ export function AlertsScreen({ entries }: AlertsScreenProps) {
         scrollEnabled
         bounces
         alwaysBounceVertical
+        contentInsetAdjustmentBehavior="never"
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={entries.length ? <View style={{ height: listHeaderHeight }} /> : null}
         ListEmptyComponent={renderEmptyState}
         renderItem={({ item }) => (
           <Pressable style={styles.card}>
@@ -92,7 +97,6 @@ const styles = StyleSheet.create({
   listContent: {
     flexGrow: 1,
     paddingHorizontal: 18,
-    paddingTop: 24,
     paddingBottom: 120,
     gap: 12,
   },

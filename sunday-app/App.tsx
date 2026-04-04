@@ -310,16 +310,17 @@ function Main() {
           );
         })}
 
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.activeIndicator,
-            {
-              width: indicatorWidth,
-              transform: [{ translateX: indicatorTranslateX }],
-            },
-          ]}
-        >
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.activeIndicatorShadow,
+          {
+            width: indicatorWidth,
+            transform: [{ translateX: indicatorTranslateX }],
+          },
+        ]}
+      >
+        <View style={styles.activeIndicator}>
           <Animated.View
             style={[
               styles.indicatorIconTrack,
@@ -345,7 +346,8 @@ function Main() {
               );
             })}
           </Animated.View>
-        </Animated.View>
+        </View>
+      </Animated.View>
       </Animated.View>
     </View>
   );
@@ -400,17 +402,27 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 14,
   },
-  activeIndicator: {
+  activeIndicatorShadow: {
     position: "absolute",
     left: NAV_HORIZONTAL_PADDING + INDICATOR_HORIZONTAL_INSET,
     top: INDICATOR_MARGIN,
     width: INDICATOR_WIDTH,
     height: NAV_HEIGHT - INDICATOR_MARGIN * 2,
     borderRadius: 999,
+    justifyContent: "center",
+    zIndex: 2,
+    shadowColor: "#ffffff",
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
+  },
+  activeIndicator: {
+    flex: 1,
+    borderRadius: 999,
     backgroundColor: ACTIVE_COLOR,
     overflow: "hidden",
     justifyContent: "center",
-    zIndex: 2,
   },
   indicatorIconTrack: {
     left: -INDICATOR_HORIZONTAL_INSET,

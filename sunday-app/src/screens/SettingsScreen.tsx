@@ -16,6 +16,7 @@ import {
   SelectedLocation,
 } from "../components/LocationPickerModal";
 import { OptionPickerModal } from "../components/OptionPickerModal";
+import { TravelTypeSelector } from "../components/TravelTypeSelector";
 import { FONTS } from "../constants/fonts";
 import {
   AppSettingsValues,
@@ -603,9 +604,6 @@ export function SettingsScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>
-          <Text style={styles.subtitle}>
-            Edit the non-secret config values Sunday uses at runtime.
-          </Text>
         </View>
 
         {isLoading ? (
@@ -725,6 +723,11 @@ export function SettingsScreen() {
                               );
                             })}
                           </View>
+                        ) : field.key === "TRAVEL_TYPE" ? (
+                          <TravelTypeSelector
+                            value={stringValue || "driving"}
+                            onChange={(value) => handleTextChange(field.key, value)}
+                          />
                         ) : field.kind === "choice" ? (
                           <View style={styles.choiceRow}>
                             {field.options?.map((option) => {

@@ -20,6 +20,7 @@ import { uploadRecordingForTranscription } from "../lib/transcription";
 const BACKGROUND = "#121212";
 const DOT_SIZE = "50%";
 const RECORDING = "#eb4034";
+const MIN_RECORDING_DURATION_MILLIS = 700;
 
 type HomeScreenProps = {
   onBackgroundPress?: () => void;
@@ -106,6 +107,17 @@ export function HomeScreen({
       await setAudioModeAsync({
         allowsRecording: false,
       });
+      const finalStatus = recorder.getStatus();
+      const durationMillis = Math.max(
+        recorderState.durationMillis ?? 0,
+        finalStatus.durationMillis ?? 0,
+      );
+      if (durationMillis < MIN_RECORDING_DURATION_MILLIS) {
+        console.log(
+          `[sunday] recording ignored (${durationMillis}ms is below ${MIN_RECORDING_DURATION_MILLIS}ms)`,
+        );
+        return;
+      }
       const recordingUrl = recorder.uri ?? recorder.getStatus().url ?? recorderState.url;
       if (!recordingUrl) {
         throw new Error("No recording file was produced.");

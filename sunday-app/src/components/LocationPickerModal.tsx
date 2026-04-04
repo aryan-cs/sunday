@@ -140,12 +140,12 @@ export function LocationPickerModal({
     >
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} style={styles.headerButton}>
+          <Pressable onPress={onClose} style={[styles.headerButton, styles.headerButtonGhost]}>
             <Text style={styles.headerButtonText}>Cancel</Text>
           </Pressable>
           <Text style={styles.headerTitle}>{title}</Text>
           <Pressable onPress={handleConfirm} style={[styles.headerButton, styles.headerButtonFilled]}>
-            <Text style={styles.headerButtonFilledText}>Use point</Text>
+            <Text style={styles.headerButtonFilledText}>Save</Text>
           </Pressable>
         </View>
 
@@ -211,10 +211,16 @@ const styles = StyleSheet.create({
     backgroundColor: ACCENT,
     paddingHorizontal: 14,
   },
+  headerButtonGhost: {
+    alignItems: "center",
+    borderRadius: 999,
+    backgroundColor: BACKGROUND,
+    paddingHorizontal: 14,
+  },
   headerButtonText: {
     color: MUTED,
     fontSize: 15,
-    fontFamily: FONTS.medium,
+    fontFamily: FONTS.semibold,
   },
   headerButtonFilledText: {
     color: BACKGROUND,

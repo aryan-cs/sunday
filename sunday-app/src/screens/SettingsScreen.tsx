@@ -1,4 +1,7 @@
 import React from "react";
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import {
   ActivityIndicator,
@@ -309,70 +312,43 @@ function getTimeZoneOptions() {
   return [...new Set(merged)].sort((left, right) => left.localeCompare(right));
 }
 
-function formatTimeForDisplay(value: string | boolean | undefined) {
+function getTimeSettingDate(value: string | boolean | undefined) {
+  const date = new Date();
+  date.setSeconds(0, 0);
+
   if (typeof value !== "string") {
-    return "";
+    return date;
   }
 
   const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-
   const match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) {
-    return trimmed;
+    return date;
   }
 
   const hours = Number.parseInt(match[1], 10);
-  const minutes = match[2];
-  if (Number.isNaN(hours) || hours < 0 || hours > 23) {
-    return trimmed;
-  }
-
-  const suffix = hours >= 12 ? "PM" : "AM";
-  const displayHour = hours % 12 || 12;
-  return `${displayHour}:${minutes} ${suffix}`;
-}
-
-function parseDisplayTime(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?\s*([aApP][mM])$/);
-  if (!match) {
-    return null;
-  }
-
-  const rawHour = Number.parseInt(match[1], 10);
-  const rawMinute = match[2] ?? "00";
-  const suffix = match[3].toUpperCase();
-  const minutes = Number.parseInt(rawMinute, 10);
-
+  const minutes = Number.parseInt(match[2], 10);
   if (
-    Number.isNaN(rawHour) ||
-    rawHour < 1 ||
-    rawHour > 12 ||
+    Number.isNaN(hours) ||
     Number.isNaN(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
     minutes < 0 ||
     minutes > 59
   ) {
-    return null;
+    return date;
   }
 
-  const baseHour = rawHour % 12;
-  const hour24 = suffix === "PM" ? baseHour + 12 : baseHour;
-  return `${String(hour24).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function formatTimeForBackend(date: Date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 export function SettingsScreen() {
   const [settings, setSettings] = React.useState<AppSettingsValues>(getInitialSettingsState);
-  const [timeInputs, setTimeInputs] = React.useState<Record<TimeSettingKey, string>>({
-    WORKDAY_START_TIME: "",
-    WORKDAY_END_TIME: "",
-  });
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -398,10 +374,6 @@ export function SettingsScreen() {
         const nextSettings = { ...current, ...response.settings };
         lastSavedSettingsRef.current = serializeSettings(nextSettings);
         hasLoadedSettingsRef.current = true;
-        setTimeInputs({
-          WORKDAY_START_TIME: formatTimeForDisplay(nextSettings.WORKDAY_START_TIME),
-          WORKDAY_END_TIME: formatTimeForDisplay(nextSettings.WORKDAY_END_TIME),
-        });
         return nextSettings;
       });
       setWarnings(response.warnings);
@@ -440,29 +412,25 @@ export function SettingsScreen() {
   }, []);
 
   const handleTextChange = React.useCallback((key: string, value: string) => {
-    if (isTimeSettingKey(key)) {
-      setTimeInputs((current) => ({
-        ...current,
-        [key]: value,
-      }));
-
-      const parsedValue = parseDisplayTime(value);
-      if (parsedValue === null) {
-        return;
-      }
-
-      setSettings((current) => ({
-        ...current,
-        [key]: parsedValue,
-      }));
-      return;
-    }
-
     setSettings((current) => ({
       ...current,
       [key]: value,
     }));
   }, []);
+
+  const handleTimeChange = React.useCallback(
+    (key: TimeSettingKey, event: DateTimePickerEvent, selectedDate?: Date) => {
+      if (event.type === "dismissed" || !selectedDate) {
+        return;
+      }
+
+      setSettings((current) => ({
+        ...current,
+        [key]: formatTimeForBackend(selectedDate),
+      }));
+    },
+    [],
+  );
 
   const handleToggleChange = React.useCallback((key: string, value: boolean) => {
     setSettings((current) => ({
@@ -560,22 +528,6 @@ export function SettingsScreen() {
       })();
     }, AUTOSAVE_DELAY_MS);
   }, [isLoading, settings]);
-
-  React.useEffect(() => {
-    setTimeInputs((current) => {
-      const next = {
-        WORKDAY_START_TIME: formatTimeForDisplay(settings.WORKDAY_START_TIME),
-        WORKDAY_END_TIME: formatTimeForDisplay(settings.WORKDAY_END_TIME),
-      };
-      if (
-        current.WORKDAY_START_TIME === next.WORKDAY_START_TIME &&
-        current.WORKDAY_END_TIME === next.WORKDAY_END_TIME
-      ) {
-        return current;
-      }
-      return next;
-    });
-  }, [settings.WORKDAY_END_TIME, settings.WORKDAY_START_TIME]);
 
   const activeLocationGroup = React.useMemo(
     () =>
@@ -688,14 +640,14 @@ export function SettingsScreen() {
                         key={field.key}
                         style={[
                           styles.fieldRow,
-                          field.kind === "boolean" && styles.fieldRowInline,
+                          (field.kind === "boolean" || isTimeSettingKey(field.key)) && styles.fieldRowInline,
                           index !== section.fields.length - 1 && styles.fieldRowBorder,
                         ]}
                       >
                         <View
                           style={[
                             styles.fieldHeader,
-                            field.kind === "boolean" && styles.fieldHeaderInline,
+                            (field.kind === "boolean" || isTimeSettingKey(field.key)) && styles.fieldHeaderInline,
                           ]}
                         >
                           <Text style={styles.fieldLabel}>{field.label}</Text>
@@ -736,6 +688,22 @@ export function SettingsScreen() {
                               );
                             })}
                           </View>
+                        ) : isTimeSettingKey(field.key) ? (
+                          (() => {
+                            const timeKey = field.key;
+                            return (
+                          <DateTimePicker
+                            value={getTimeSettingDate(settings[timeKey])}
+                            mode="time"
+                            display={Platform.OS === "ios" ? "compact" : "default"}
+                            themeVariant="dark"
+                            onChange={(event, selectedDate) =>
+                              handleTimeChange(timeKey, event, selectedDate)
+                            }
+                            style={styles.timePicker}
+                          />
+                            );
+                          })()
                         ) : field.key === "TRAVEL_TYPE" ? (
                           <TravelTypeSelector
                             value={stringValue || "driving"}
@@ -791,12 +759,10 @@ export function SettingsScreen() {
                             autoCorrect={false}
                             keyboardType={getKeyboardType(field.kind)}
                             onChangeText={(value) => handleTextChange(field.key, value)}
-                            placeholder={
-                              isTimeSettingKey(field.key) ? "9:00 AM" : field.placeholder
-                            }
+                            placeholder={field.placeholder}
                             placeholderTextColor="#6f6f6f"
                             style={styles.input}
-                            value={isTimeSettingKey(field.key) ? timeInputs[field.key] : stringValue}
+                            value={stringValue}
                           />
                         )}
                       </View>
@@ -931,6 +897,11 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL_ALT,
     fontFamily: FONTS.regular,
     fontSize: 15,
+  },
+  timePicker: {
+    width: Platform.OS === "ios" ? 124 : 132,
+    alignSelf: "center",
+    marginRight: Platform.OS === "ios" ? -8 : 0,
   },
   locationRow: {
     flexDirection: "row",

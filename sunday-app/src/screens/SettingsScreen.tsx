@@ -29,6 +29,8 @@ const BORDER = "#323232";
 const MUTED = "#8b8b8b";
 const ACCENT = "#ffffff";
 const AUTOSAVE_DELAY_MS = 500;
+const TIME_SETTING_KEYS = ["WORKDAY_START_TIME", "WORKDAY_END_TIME"] as const;
+type TimeSettingKey = (typeof TIME_SETTING_KEYS)[number];
 
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice";
 
@@ -127,13 +129,15 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       {
         key: "WORKDAY_START_TIME",
         label: "Workday start",
-        placeholder: "09:00",
+        description: "Use 12-hour time like 9:00 AM",
+        placeholder: "9:00 AM",
         kind: "text",
       },
       {
         key: "WORKDAY_END_TIME",
         label: "Workday end",
-        placeholder: "17:00",
+        description: "Use 12-hour time like 5:00 PM",
+        placeholder: "5:00 PM",
         kind: "text",
       },
       {
@@ -229,8 +233,74 @@ function defaultPickerCoordinate(settings: AppSettingsValues) {
   };
 }
 
+function isTimeSettingKey(value: string): value is TimeSettingKey {
+  return (TIME_SETTING_KEYS as readonly string[]).includes(value);
+}
+
+function formatTimeForDisplay(value: string | boolean | undefined) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return trimmed;
+  }
+
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = match[2];
+  if (Number.isNaN(hours) || hours < 0 || hours > 23) {
+    return trimmed;
+  }
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours % 12 || 12;
+  return `${displayHour}:${minutes} ${suffix}`;
+}
+
+function parseDisplayTime(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?\s*([aApP][mM])$/);
+  if (!match) {
+    return null;
+  }
+
+  const rawHour = Number.parseInt(match[1], 10);
+  const rawMinute = match[2] ?? "00";
+  const suffix = match[3].toUpperCase();
+  const minutes = Number.parseInt(rawMinute, 10);
+
+  if (
+    Number.isNaN(rawHour) ||
+    rawHour < 1 ||
+    rawHour > 12 ||
+    Number.isNaN(minutes) ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  const baseHour = rawHour % 12;
+  const hour24 = suffix === "PM" ? baseHour + 12 : baseHour;
+  return `${String(hour24).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 export function SettingsScreen() {
   const [settings, setSettings] = React.useState<AppSettingsValues>(getInitialSettingsState);
+  const [timeInputs, setTimeInputs] = React.useState<Record<TimeSettingKey, string>>({
+    WORKDAY_START_TIME: "",
+    WORKDAY_END_TIME: "",
+  });
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -253,6 +323,10 @@ export function SettingsScreen() {
         const nextSettings = { ...current, ...response.settings };
         lastSavedSettingsRef.current = serializeSettings(nextSettings);
         hasLoadedSettingsRef.current = true;
+        setTimeInputs({
+          WORKDAY_START_TIME: formatTimeForDisplay(nextSettings.WORKDAY_START_TIME),
+          WORKDAY_END_TIME: formatTimeForDisplay(nextSettings.WORKDAY_END_TIME),
+        });
         return nextSettings;
       });
       setWarnings(response.warnings);
@@ -280,6 +354,24 @@ export function SettingsScreen() {
   }, []);
 
   const handleTextChange = React.useCallback((key: string, value: string) => {
+    if (isTimeSettingKey(key)) {
+      setTimeInputs((current) => ({
+        ...current,
+        [key]: value,
+      }));
+
+      const parsedValue = parseDisplayTime(value);
+      if (parsedValue === null) {
+        return;
+      }
+
+      setSettings((current) => ({
+        ...current,
+        [key]: parsedValue,
+      }));
+      return;
+    }
+
     setSettings((current) => ({
       ...current,
       [key]: value,
@@ -361,6 +453,22 @@ export function SettingsScreen() {
       })();
     }, AUTOSAVE_DELAY_MS);
   }, [isLoading, settings]);
+
+  React.useEffect(() => {
+    setTimeInputs((current) => {
+      const next = {
+        WORKDAY_START_TIME: formatTimeForDisplay(settings.WORKDAY_START_TIME),
+        WORKDAY_END_TIME: formatTimeForDisplay(settings.WORKDAY_END_TIME),
+      };
+      if (
+        current.WORKDAY_START_TIME === next.WORKDAY_START_TIME &&
+        current.WORKDAY_END_TIME === next.WORKDAY_END_TIME
+      ) {
+        return current;
+      }
+      return next;
+    });
+  }, [settings.WORKDAY_END_TIME, settings.WORKDAY_START_TIME]);
 
   const activeLocationGroup = React.useMemo(
     () =>
@@ -515,10 +623,12 @@ export function SettingsScreen() {
                             autoCorrect={false}
                             keyboardType={getKeyboardType(field.kind)}
                             onChangeText={(value) => handleTextChange(field.key, value)}
-                            placeholder={field.placeholder}
+                            placeholder={
+                              isTimeSettingKey(field.key) ? "9:00 AM" : field.placeholder
+                            }
                             placeholderTextColor="#6f6f6f"
                             style={styles.input}
-                            value={stringValue}
+                            value={isTimeSettingKey(field.key) ? timeInputs[field.key] : stringValue}
                           />
                         )}
                       </View>

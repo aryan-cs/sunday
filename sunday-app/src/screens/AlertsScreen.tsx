@@ -56,6 +56,8 @@ export function AlertsScreen({ entries }: AlertsScreenProps) {
         keyExtractor={(item) => item.id}
         contentContainerStyle={entries.length ? styles.listContent : styles.emptyContent}
         scrollEnabled
+        bounces
+        alwaysBounceVertical
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={renderEmptyState}
         renderItem={({ item }) => (
@@ -88,6 +90,7 @@ const styles = StyleSheet.create({
     backgroundColor: BACKGROUND,
   },
   listContent: {
+    flexGrow: 1,
     paddingHorizontal: 18,
     paddingTop: 24,
     paddingBottom: 120,

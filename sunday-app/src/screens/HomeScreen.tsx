@@ -39,19 +39,19 @@ export function HomeScreen() {
             toValue: 0.94,
             duration: 70,
             easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
+            useNativeDriver: false,
           }),
           Animated.spring(dotScale, {
             toValue: 1.08,
             tension: 280,
             friction: 7,
-            useNativeDriver: true,
+            useNativeDriver: false,
           }),
           Animated.spring(dotScale, {
             toValue: 1,
             tension: 220,
             friction: 10,
-            useNativeDriver: true,
+            useNativeDriver: false,
           }),
         ]),
       ]).start();

@@ -1,17 +1,6 @@
 import { useEffect } from "react";
 import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
 import { registerPushToken } from "../api";
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
 
 export function usePushNotifications() {
   useEffect(() => {
@@ -21,6 +10,18 @@ export function usePushNotifications() {
 
     (async () => {
       try {
+        const Notifications = await import("expo-notifications");
+
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldShowBanner: true,
+            shouldShowList: true,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+          }),
+        });
+
         const { status } = await Notifications.requestPermissionsAsync();
         if (status !== "granted") return;
         const { data: token } = await Notifications.getExpoPushTokenAsync();

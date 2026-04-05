@@ -5,6 +5,7 @@ Sends formatted summaries to Telegram and/or iMessage (macOS only).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -266,12 +267,49 @@ end tell
         return True
 
 
+async def send_imessage_to(recipient: str, message: str) -> None:
+    """
+    Send an iMessage to an arbitrary recipient (phone number or iCloud email).
+
+    Unlike IMessageSender, this does not require IMESSAGE_ENABLED — it is
+    always available on macOS regardless of the configured default recipient.
+    """
+    escaped_msg = message.replace("\\", "\\\\").replace('"', '\\"')
+    escaped_recipient = recipient.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'''\
+tell application "Messages"
+    set targetBuddy to "{escaped_recipient}"
+    set targetService to id of 1st account whose service type = iMessage
+    set theMessage to "{escaped_msg}"
+    send theMessage to participant targetBuddy of account id targetService
+end tell
+'''
+    try:
+        await asyncio.to_thread(
+            subprocess.run,
+            ["osascript", "-e", script],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        log.info("iMessage sent to %s", recipient)
+    except FileNotFoundError as exc:
+        raise MessagingDeliveryError("iMessage requires macOS and osascript.") from exc
+    except subprocess.CalledProcessError as exc:
+        raise MessagingDeliveryError(
+            f"iMessage AppleScript error: {exc.stderr.decode().strip()}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MessagingDeliveryError("iMessage send timed out.") from exc
+
+
 def format_summary(
     parsed_email: dict,
     calendar_status: str = "not_applicable",
     travel_info: dict | None = None,
     processing_notes: list[str] | None = None,
     source_email_link: str | None = None,
+    prep_brief: str | None = None,
 ) -> str:
     """Format a parsed email dict into a human-readable message."""
     del source_email_link
@@ -324,6 +362,11 @@ def format_summary(
 
         if parsed_email.get("can_wait"):
             lines.append("😌 this can wait")
+
+    if prep_brief:
+        lines.append("")
+        lines.append("🧠 heads up:")
+        lines.append(prep_brief)
 
     if notes:
         lines.append("")
@@ -454,6 +497,7 @@ async def send_summary(
     travel_info: dict | None = None,
     processing_notes: list[str] | None = None,
     source_email_link: str | None = None,
+    prep_brief: str | None = None,
 ) -> None:
     """
     Format and dispatch a summary to all configured messaging channels.
@@ -467,5 +511,6 @@ async def send_summary(
         travel_info,
         processing_notes,
         source_email_link,
+        prep_brief,
     )
     await send_text_message(message, source_email_link)

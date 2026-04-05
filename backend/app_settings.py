@@ -9,6 +9,7 @@ from .config import Config, PROJECT_ROOT
 
 CONFIG_FILE_PATH = PROJECT_ROOT / "config.env"
 
+_AGENT_MODE_OPTIONS = ("off", "openclaw", "builtin")
 _TRAVEL_TYPE_OPTIONS = ("driving", "walking", "bicycling", "transit")
 _PROVIDER_OPTIONS = tuple(Config.llm_providers.keys())
 _TITLE_DEVICE_OPTIONS = ("auto", "cpu", "mps", "cuda")
@@ -41,6 +42,7 @@ APP_SETTINGS: tuple[AppSettingDefinition, ...] = (
     AppSettingDefinition("SUNDAY_API_KEY", "sunday_api_key", "secret"),
     AppSettingDefinition("OPENAI_API_KEY", "openai_api_key", "secret"),
     AppSettingDefinition("ANTHROPIC_API_KEY", "anthropic_api_key", "secret"),
+    AppSettingDefinition("AGENT_MODE", "agent_mode", "choice", _AGENT_MODE_OPTIONS),
     AppSettingDefinition("OPENCLAW_BASE_URL", "openclaw_base_url", "text"),
     AppSettingDefinition("OPENCLAW_TOKEN", "openclaw_token", "secret"),
     AppSettingDefinition("OPENCLAW_ENABLED", "openclaw_enabled", "bool"),

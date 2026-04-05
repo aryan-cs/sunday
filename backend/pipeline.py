@@ -17,7 +17,8 @@ from .email_parser import enrich_event_details, get_calendar_readiness_issues, p
 from .errors import ConfigurationError, TravelEstimationError
 from .gmail_watcher import GmailWatcher
 from .messenger import format_leave_alert, send_summary, send_text_message
-from .openclaw import notify_email_event
+from . import agent as _agent
+from .openclaw import notify_email_event as _openclaw_notify_email
 from .state_store import get_state_file
 from .travel_estimator import TravelEstimator
 
@@ -481,7 +482,6 @@ async def process_single_email(
     _notifiable = (
         parsed.get("has_event")
         or parsed.get("needs_response")
-        or parsed.get("action_items")
         or parsed.get("urgency") in ("high", "medium")
     )
     if _notifiable:
@@ -499,7 +499,10 @@ async def process_single_email(
     gmail.mark_as_processed(email_data["id"])
     log.info("  → Gmail message marked as processed")
 
-    await notify_email_event(parsed, subject=email_data.get("subject", ""))
+    if Config.agent_mode == "openclaw":
+        await _openclaw_notify_email(parsed, subject=email_data.get("subject", ""))
+    elif Config.agent_mode == "builtin":
+        await _agent.notify_email_event(parsed, subject=email_data.get("subject", ""))
 
     return {
         "email_id": email_data.get("id"),

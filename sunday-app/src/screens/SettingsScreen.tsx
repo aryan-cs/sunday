@@ -131,11 +131,33 @@ const LOG_LEVEL_OPTIONS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] as c
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select" | "secret";
 type OptionSheetKind =
   | "agent"
+  | "AGENT_MODE"
   | "transcription-model"
   | "summarization-model"
   | "ACTIVE_LLM_PROVIDER"
   | "TRANSCRIPT_TITLE_DEVICE"
   | "LOG_LEVEL";
+
+const AGENT_MODE_OPTIONS = ["off", "builtin", "openclaw"] as const;
+const AGENT_MODE_LABELS: Record<string, string> = {
+  off: "Off",
+  builtin: "Built-in AI",
+  openclaw: "OpenClaw",
+};
+
+function getProviderApiKeyConfig(provider: string): { key: string; placeholder: string } | null {
+  switch (provider) {
+    case "gemini": return { key: "GEMINI_API_KEY", placeholder: "AIza..." };
+    case "openrouter": return { key: "OPENROUTER_API_KEY", placeholder: "sk-or-..." };
+    case "groq": return { key: "GROQ_API_KEY", placeholder: "gsk_..." };
+    case "cerebras": return { key: "CEREBRAS_API_KEY", placeholder: "csk-..." };
+    case "together": return { key: "TOGETHER_API_KEY", placeholder: "..." };
+    case "mistral": return { key: "MISTRAL_API_KEY", placeholder: "..." };
+    case "huggingface": return { key: "HUGGINGFACE_API_KEY", placeholder: "hf_..." };
+    case "custom": return { key: "CUSTOM_LLM_API_KEY", placeholder: "..." };
+    default: return null; // ollama needs no key
+  }
+}
 
 type SettingField = {
   key: string;
@@ -253,60 +275,62 @@ const SETTINGS_SECTIONS: SettingSection[] = [
     ],
   },
   {
-    title: "Schedule",
+    title: "Travel & Hours",
     fields: [
       {
         key: "WORK_DAYS",
         label: "Work days",
-        description: "Tap the days when work-hours logic should apply.",
+        description: "Days when work-hours logic applies.",
         kind: "text",
       },
       {
         key: "WORKDAY_START_TIME",
-        label: "Workday Start",
-        description: "Use 12-hour time like 9:00 AM",
-        placeholder: "9:00 AM",
+        label: "Start time",
+        placeholder: "09:00",
         kind: "text",
       },
       {
         key: "WORKDAY_END_TIME",
-        label: "Workday End",
-        description: "Use 12-hour time like 5:00 PM",
-        placeholder: "5:00 PM",
+        label: "End time",
+        placeholder: "17:00",
         kind: "text",
       },
       {
         key: "TRAVEL_TYPE",
-        label: "Travel type",
+        label: "How you get around",
         kind: "choice",
         options: ["driving", "walking", "bicycling", "transit"],
       },
       {
         key: "PREP_TIME_MINUTES",
-        label: "Minutes between in-person events",
+        label: "Prep time (in-person)",
         kind: "number",
       },
       {
         key: "ONLINE_PREP_MINUTES",
-        label: "Minutes between online events",
+        label: "Prep time (online)",
         kind: "number",
       },
+    ],
+  },
+  {
+    title: "Inbox",
+    fields: [
       {
         key: "GMAIL_LABELS",
-        label: "Gmail inboxes to watch",
-        description:
-          "Comma-separated label IDs. Common options: CATEGORY_PRIMARY (recommended), INBOX, CATEGORY_SOCIAL, CATEGORY_PROMOTIONS, CATEGORY_UPDATES, CATEGORY_FORUMS, or any custom label name.",
+        label: "Labels to watch",
+        description: "CATEGORY_PRIMARY is recommended. Comma-separate multiple labels.",
         placeholder: "CATEGORY_PRIMARY",
         kind: "text",
       },
       {
         key: "POLL_INTERVAL_SECONDS",
-        label: "Inbox polling interval duration",
+        label: "Check every (seconds)",
         kind: "number",
       },
       {
         key: "MAX_EMAILS_PER_CYCLE",
-        label: "Maximum emails to check per cycle",
+        label: "Max emails per check",
         kind: "number",
       },
     ],
@@ -407,13 +431,26 @@ const SETTINGS_SECTIONS: SettingSection[] = [
     fields: [
       {
         key: "IMESSAGE_ENABLED",
-        label: "Enable iMessage",
+        label: "iMessage",
         kind: "boolean",
       },
       {
         key: "IMESSAGE_RECIPIENT",
         label: "iMessage recipient",
         kind: "text",
+        placeholder: "+1...",
+      },
+      {
+        key: "TELEGRAM_BOT_TOKEN",
+        label: "Telegram bot token",
+        kind: "secret",
+        placeholder: "bot token from @BotFather",
+      },
+      {
+        key: "TELEGRAM_CHAT_ID",
+        label: "Telegram chat ID",
+        kind: "secret",
+        placeholder: "your chat ID",
       },
     ],
   },
@@ -536,16 +573,6 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       {
         key: "GOOGLE_MAPS_API_KEY",
         label: "Google Maps API key",
-        kind: "secret",
-      },
-      {
-        key: "TELEGRAM_BOT_TOKEN",
-        label: "Telegram bot token",
-        kind: "secret",
-      },
-      {
-        key: "TELEGRAM_CHAT_ID",
-        label: "Telegram chat ID",
         kind: "secret",
       },
     ],
@@ -996,6 +1023,8 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
       setActiveOptionPicker(kind);
       if (kind === "agent") {
         setPendingOptionValue(connectedAgent || "Ollama");
+      } else if (kind === "AGENT_MODE") {
+        setPendingOptionValue(String(settings.AGENT_MODE ?? "") || "off");
       } else if (kind === "ACTIVE_LLM_PROVIDER") {
         setPendingOptionValue(String(settings.ACTIVE_LLM_PROVIDER ?? "") || "gemini");
       } else if (kind === "TRANSCRIPT_TITLE_DEVICE") {
@@ -1043,6 +1072,8 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
   const confirmOptionPicker = React.useCallback(() => {
     if (activeOptionPicker === "agent") {
       handleConnectedAgentChange(pendingOptionValue || "Ollama");
+    } else if (activeOptionPicker === "AGENT_MODE") {
+      handleTextChange("AGENT_MODE", pendingOptionValue || "off");
     } else if (activeOptionPicker === "ACTIVE_LLM_PROVIDER") {
       handleTextChange("ACTIVE_LLM_PROVIDER", pendingOptionValue || "gemini");
     } else if (activeOptionPicker === "TRANSCRIPT_TITLE_DEVICE") {
@@ -1258,6 +1289,14 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
       return {
         title: "Agent",
         options: CONNECTED_AGENT_OPTIONS,
+        recommendedOption: null,
+      };
+    }
+    if (activeOptionPicker === "AGENT_MODE") {
+      return {
+        title: "Intelligence Mode",
+        options: AGENT_MODE_OPTIONS,
+        optionLabels: AGENT_MODE_LABELS,
         recommendedOption: null,
       };
     }
@@ -1803,42 +1842,6 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
                 />
               </View>
 
-              {connectedAgent === "OpenClaw" && (
-                <>
-                  <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                    <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                      <Text numberOfLines={1} style={styles.fieldLabel}>
-                        Hook token
-                      </Text>
-                    </View>
-                    <TextInput
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardAppearance="dark"
-                      onChangeText={(value) => handleTextChange("OPENCLAW_TOKEN", value)}
-                      onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                      placeholder="your-hook-token"
-                      placeholderTextColor="#6f6f6f"
-                      secureTextEntry
-                      style={[styles.input, styles.connectionInput]}
-                      value={String(settings["OPENCLAW_TOKEN"] ?? "")}
-                    />
-                  </View>
-                  <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                    <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                      <Text numberOfLines={1} style={styles.fieldLabel}>
-                        Enabled
-                      </Text>
-                    </View>
-                    <Switch
-                      onValueChange={(value) => handleTextChange("OPENCLAW_ENABLED", String(value))}
-                      thumbColor={ACCENT}
-                      trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-                      value={settings["OPENCLAW_ENABLED"] === true || settings["OPENCLAW_ENABLED"] === "true"}
-                    />
-                  </View>
-                </>
-              )}
 
               <View style={styles.fieldRow}>
                 <View style={styles.fieldHeader}>
@@ -1913,6 +1916,125 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
                   </Text>
                 </Pressable>
               </View>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Intelligence</Text>
+            <Text style={styles.sectionHint}>Optional — adds AI insights on top of your summaries.</Text>
+            <View style={styles.sectionPanel}>
+              <View style={[styles.fieldRow, styles.fieldRowInline, settings.AGENT_MODE && settings.AGENT_MODE !== "off" ? styles.fieldRowBorder : undefined]}>
+                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                  <Text numberOfLines={1} style={styles.fieldLabel}>Mode</Text>
+                </View>
+                <Pressable onPress={() => openOptionPicker("AGENT_MODE")} style={styles.selectTrigger}>
+                  <Text numberOfLines={1} style={styles.selectTriggerText}>
+                    {AGENT_MODE_LABELS[String(settings.AGENT_MODE ?? "off")] ?? "Off"}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {settings.AGENT_MODE === "builtin" && (() => {
+                const provider = String(settings.ACTIVE_LLM_PROVIDER ?? "gemini");
+                const apiKeyConfig = getProviderApiKeyConfig(provider);
+                return (
+                  <>
+                    <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                      <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                        <Text numberOfLines={1} style={styles.fieldLabel}>Provider</Text>
+                      </View>
+                      <Pressable onPress={() => openOptionPicker("ACTIVE_LLM_PROVIDER")} style={styles.selectTrigger}>
+                        <Text numberOfLines={1} style={styles.selectTriggerText}>{provider}</Text>
+                      </Pressable>
+                    </View>
+                    {apiKeyConfig ? (
+                      <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                        <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                          <Text numberOfLines={1} style={styles.fieldLabel}>API key</Text>
+                        </View>
+                        <TextInput
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardAppearance="dark"
+                          onChangeText={(value) => handleTextChange(apiKeyConfig.key, value)}
+                          onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                          placeholder={apiKeyConfig.placeholder}
+                          placeholderTextColor="#6f6f6f"
+                          secureTextEntry
+                          style={[styles.input, styles.connectionInput]}
+                          value={String(settings[apiKeyConfig.key] ?? "")}
+                        />
+                      </View>
+                    ) : (
+                      <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                        <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                          <Text numberOfLines={1} style={styles.fieldLabel}>Ollama URL</Text>
+                        </View>
+                        <TextInput
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardAppearance="dark"
+                          onChangeText={(value) => handleTextChange("OLLAMA_BASE_URL", value)}
+                          onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                          placeholder="http://localhost:11434"
+                          placeholderTextColor="#6f6f6f"
+                          style={[styles.input, styles.connectionInput]}
+                          value={String(settings.OLLAMA_BASE_URL ?? "")}
+                        />
+                      </View>
+                    )}
+                  </>
+                );
+              })()}
+
+              {settings.AGENT_MODE === "openclaw" && (
+                <>
+                  <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                    <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                      <Text numberOfLines={1} style={styles.fieldLabel}>URL</Text>
+                    </View>
+                    <TextInput
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardAppearance="dark"
+                      onChangeText={(value) => handleTextChange("OPENCLAW_BASE_URL", value)}
+                      onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                      placeholder="http://localhost:18789"
+                      placeholderTextColor="#6f6f6f"
+                      style={[styles.input, styles.connectionInput]}
+                      value={String(settings.OPENCLAW_BASE_URL ?? "")}
+                    />
+                  </View>
+                  <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                    <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                      <Text numberOfLines={1} style={styles.fieldLabel}>Token</Text>
+                    </View>
+                    <TextInput
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardAppearance="dark"
+                      onChangeText={(value) => handleTextChange("OPENCLAW_TOKEN", value)}
+                      onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                      placeholder="hook token"
+                      placeholderTextColor="#6f6f6f"
+                      secureTextEntry
+                      style={[styles.input, styles.connectionInput]}
+                      value={String(settings.OPENCLAW_TOKEN ?? "")}
+                    />
+                  </View>
+                  <View style={[styles.fieldRow, styles.fieldRowInline]}>
+                    <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                      <Text numberOfLines={1} style={styles.fieldLabel}>Enabled</Text>
+                    </View>
+                    <Switch
+                      onValueChange={(value) => handleTextChange("OPENCLAW_ENABLED", String(value))}
+                      thumbColor={ACCENT}
+                      trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
+                      value={settings.OPENCLAW_ENABLED === true || settings.OPENCLAW_ENABLED === "true"}
+                    />
+                  </View>
+                </>
+              )}
             </View>
           </View>
 
@@ -2050,14 +2172,18 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
                   itemStyle={styles.sheetPickerItem}
                   style={styles.sheetPicker}
                 >
-                  {optionPickerConfig.options.map((option) => (
-                    <Picker.Item
-                      key={option}
-                      label={formatModelOptionLabel(option, optionPickerConfig.recommendedOption)}
-                      value={option}
-                      color="#ffffff"
-                    />
-                  ))}
+                  {optionPickerConfig.options.map((option) => {
+                    const labels = (optionPickerConfig as { optionLabels?: Record<string, string> }).optionLabels;
+                    const label = labels?.[option] ?? formatModelOptionLabel(option, optionPickerConfig.recommendedOption);
+                    return (
+                      <Picker.Item
+                        key={option}
+                        label={label}
+                        value={option}
+                        color="#ffffff"
+                      />
+                    );
+                  })}
                 </Picker>
               </View>
             </Animated.View>
@@ -2112,6 +2238,13 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontFamily: FONTS.semibold,
     fontSize: 18,
+  },
+  sectionHint: {
+    color: MUTED,
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 8,
   },
   sectionTitleDanger: {
     color: "#ff8f8f",

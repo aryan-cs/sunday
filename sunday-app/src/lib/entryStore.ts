@@ -62,6 +62,7 @@ function parseStoredEntry(value: unknown): AlertEntry | null {
     createdAt: candidate.createdAt,
     status: candidate.status,
     audioUri: typeof candidate.audioUri === "string" ? candidate.audioUri : null,
+    actions: Array.isArray(candidate.actions) ? candidate.actions : undefined,
   };
 }
 

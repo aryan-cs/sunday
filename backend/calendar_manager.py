@@ -252,17 +252,22 @@ class CalendarManager:
         items: list[dict] = []
 
         for calendar_id in self._calendar_ids_for_reads():
-            result = (
-                self.service.events()
-                .list(
-                    calendarId=calendar_id,
-                    timeMin=start_dt.isoformat(),
-                    timeMax=end_dt.isoformat(),
-                    singleEvents=True,
-                    orderBy=order_by,
+            try:
+                result = (
+                    self.service.events()
+                    .list(
+                        calendarId=calendar_id,
+                        timeMin=start_dt.isoformat(),
+                        timeMax=end_dt.isoformat(),
+                        singleEvents=True,
+                        orderBy=order_by,
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+            except Exception as exc:
+                # Do not fail the whole read if one calendar is inaccessible.
+                log.warning("Skipping calendar %s during read: %s", calendar_id, exc)
+                continue
             for item in result.get("items", []):
                 enriched = dict(item)
                 enriched.setdefault("calendarId", calendar_id)

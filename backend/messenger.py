@@ -5,6 +5,7 @@ Sends formatted summaries to Telegram and/or iMessage (macOS only).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -264,6 +265,42 @@ end tell
 
         log.debug("iMessage sent to %s", Config.imessage_recipient)
         return True
+
+
+async def send_imessage_to(recipient: str, message: str) -> None:
+    """
+    Send an iMessage to an arbitrary recipient (phone number or iCloud email).
+
+    Unlike IMessageSender, this does not require IMESSAGE_ENABLED — it is
+    always available on macOS regardless of the configured default recipient.
+    """
+    escaped_msg = message.replace("\\", "\\\\").replace('"', '\\"')
+    escaped_recipient = recipient.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'''\
+tell application "Messages"
+    set targetBuddy to "{escaped_recipient}"
+    set targetService to id of 1st account whose service type = iMessage
+    set theMessage to "{escaped_msg}"
+    send theMessage to participant targetBuddy of account id targetService
+end tell
+'''
+    try:
+        await asyncio.to_thread(
+            subprocess.run,
+            ["osascript", "-e", script],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        log.info("iMessage sent to %s", recipient)
+    except FileNotFoundError as exc:
+        raise MessagingDeliveryError("iMessage requires macOS and osascript.") from exc
+    except subprocess.CalledProcessError as exc:
+        raise MessagingDeliveryError(
+            f"iMessage AppleScript error: {exc.stderr.decode().strip()}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MessagingDeliveryError("iMessage send timed out.") from exc
 
 
 def format_summary(

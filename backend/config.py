@@ -112,7 +112,19 @@ class Config:
             "model": os.getenv("CUSTOM_LLM_MODEL", ""),
             "base_url": os.getenv("CUSTOM_LLM_BASE_URL", ""),
         },
+        "openai": {
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            "base_url": "https://api.openai.com/v1",
+        },
+        "anthropic": {
+            "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+            "model": os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+            "base_url": "https://api.anthropic.com",
+        },
     }
+
+    connected_agent: str = os.getenv("CONNECTED_AGENT", "ollama")
 
     # ── Google ──
     google_creds_file: str = _resolve_project_path(
@@ -150,6 +162,9 @@ class Config:
     travel_mode: str = _get_with_legacy("TRAVEL_TYPE", "DEFAULT_TRAVEL_MODE", "driving")
     auto_cleanup_hours: int = int(os.getenv("AUTO_CLEANUP_HOURS", "24"))
     gmail_labels: list[str] = _get_csv("GMAIL_LABELS", "INBOX")
+    gmail_initial_lookback_minutes: int = int(
+        os.getenv("GMAIL_INITIAL_LOOKBACK_MINUTES", "180")
+    )
     timezone: str = os.getenv("TIMEZONE", "America/Chicago")
     state_dir: str = _resolve_project_path(
         os.getenv("STATE_DIR", str(PROJECT_ROOT / ".state"))
@@ -247,6 +262,8 @@ class Config:
             )
         if cls.max_emails_per_cycle < 1:
             errors.append("MAX_EMAILS_PER_CYCLE must be at least 1.")
+        if cls.gmail_initial_lookback_minutes < 0:
+            errors.append("GMAIL_INITIAL_LOOKBACK_MINUTES must be >= 0.")
         if cls.llm_retry_attempts < 1:
             errors.append("LLM_RETRY_ATTEMPTS must be at least 1.")
         if cls.llm_retry_base_seconds <= 0:

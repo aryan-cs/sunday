@@ -493,6 +493,7 @@ async def process_single_email(
         "email_id": email_data.get("id"),
         "subject": email_data.get("subject"),
         "has_event": parsed.get("has_event"),
+        "event": parsed.get("event"),
         "calendar_status": calendar_status,
         "calendar_event_link": calendar_event_link,
         "urgency": parsed.get("urgency"),

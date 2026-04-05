@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from .action_center_store import append_action_center_entries_from_pipeline_results
 from .config import Config
 from .errors import ConfigurationError
 from .logging_utils import setup_logging
@@ -45,6 +46,7 @@ async def main() -> None:
         try:
             results = await run_pipeline()
             if results:
+                appended = append_action_center_entries_from_pipeline_results(results)
                 failures = sum(1 for result in results if "error" in result)
                 log.info(
                     "Handled %d email(s) this cycle (%d succeeded, %d failed)",
@@ -52,6 +54,8 @@ async def main() -> None:
                     len(results) - failures,
                     failures,
                 )
+                if appended:
+                    log.info("Added %d Action Center entr(y/ies) from email processing", appended)
 
             leave_alerts = await send_due_leave_alerts()
             if leave_alerts:

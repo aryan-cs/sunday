@@ -23,13 +23,15 @@ import {
   RecordInactiveIcon,
   AlertIcon,
 } from "./src/components/NavIcons";
-import { AlertEntry } from "./src/lib/alertEntries";
+import { ActionItem, AlertEntry } from "./src/lib/alertEntries";
 import {
   deleteStoredAlertAudio,
   loadStoredAlertEntries,
   saveStoredAlertEntries,
 } from "./src/lib/entryStore";
+import { fetchActionCenterEntries } from "./src/lib/actionCenterSync";
 import { summarizeTranscript } from "./src/lib/transcriptSummary";
+import { syncDeviceContacts } from "./src/lib/contactsSync";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const BACKGROUND = "#121212";
@@ -58,6 +60,7 @@ const NAV_ITEM_WIDTH = (NAV_WIDTH - NAV_HORIZONTAL_PADDING * 2) / TABS.length;
 const INDICATOR_WIDTH = NAV_ITEM_WIDTH - INDICATOR_HORIZONTAL_INSET * 2;
 const INDICATOR_EDGE_EXTENSION = 8;
 const RECORD_TAB_INDEX = 1;
+const ALERTS_TAB_INDEX = 2;
 
 function getIndicatorTarget(index: number) {
   if (index === 0 || index === TABS.length - 1) {
@@ -226,7 +229,7 @@ function Main() {
     return id;
   }, []);
 
-  const handleTranscript = React.useCallback((entryId: string, transcript: string, summary?: string) => {
+  const handleTranscript = React.useCallback((entryId: string, transcript: string, summary?: string, actions?: ActionItem[]) => {
     setAlertEntries((current) =>
       current.map((entry) =>
         entry.id === entryId
@@ -235,6 +238,7 @@ function Main() {
               transcript,
               summary: (summary?.trim() || summarizeTranscript(transcript)).trim(),
               status: "complete",
+              actions,
             }
           : entry,
       ),
@@ -282,6 +286,34 @@ function Main() {
     });
   }, []);
 
+  const mergeActionCenterEntries = React.useCallback((incoming: AlertEntry[]) => {
+    if (incoming.length === 0) {
+      return;
+    }
+    setAlertEntries((current) => {
+      const byId = new Map<string, AlertEntry>();
+      for (const entry of current) {
+        byId.set(entry.id, entry);
+      }
+      for (const entry of incoming) {
+        byId.set(entry.id, entry);
+      }
+      return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    });
+  }, []);
+
+  const syncActionCenter = React.useCallback(async () => {
+    try {
+      const remoteEntries = await fetchActionCenterEntries(120);
+      mergeActionCenterEntries(remoteEntries);
+    } catch (error) {
+      console.warn(
+        "[sunday] action center sync failed",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }, [mergeActionCenterEntries]);
+
   React.useEffect(() => {
     let isCancelled = false;
 
@@ -300,6 +332,49 @@ function Main() {
     return () => {
       isCancelled = true;
     };
+  }, []);
+
+  React.useEffect(() => {
+    if (!entriesHydrated) {
+      return;
+    }
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    void syncActionCenter();
+    intervalId = setInterval(() => {
+      void syncActionCenter();
+    }, 60000);
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [entriesHydrated, syncActionCenter]);
+
+  React.useEffect(() => {
+    if (!entriesHydrated) {
+      return;
+    }
+    if (activeIndex === ALERTS_TAB_INDEX) {
+      void syncActionCenter();
+    }
+  }, [activeIndex, entriesHydrated, syncActionCenter]);
+
+  React.useEffect(() => {
+    void (async () => {
+      try {
+        const result = await syncDeviceContacts();
+        if (result.ok && !result.skipped) {
+          console.log(`[sunday] synced ${result.count} contact(s)`);
+        }
+      } catch (error) {
+        console.warn(
+          "[sunday] contact sync failed",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    })();
   }, []);
 
   React.useEffect(() => {

@@ -14,12 +14,14 @@
         "CFBundleName": "Sunday",
         "ITSAppUsesNonExemptEncryption": false,
         "NSMicrophoneUsageDescription": "Allow Sunday to record your voice so it can transcribe speech.",
-        "NSLocationWhenInUseUsageDescription": "Allow Sunday to access your phone location when you enable it in settings."
+        "NSLocationWhenInUseUsageDescription": "Allow Sunday to access your phone location when you enable it in settings.",
+        "NSContactsUsageDescription": "Allow Sunday to read your contacts so it can match names and draft/send texts."
       }
     },
     "plugins": [
       "expo-font",
       "expo-audio",
+      "expo-contacts",
       "@react-native-community/datetimepicker"
     ],
     "android": {

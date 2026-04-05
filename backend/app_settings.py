@@ -36,6 +36,10 @@ APP_SETTINGS: tuple[AppSettingDefinition, ...] = (
     AppSettingDefinition("TEXT_EMAIL_LINKS", "text_email_links", "bool"),
     AppSettingDefinition("POLL_INTERVAL_SECONDS", "poll_interval", "int"),
     AppSettingDefinition("MAX_EMAILS_PER_CYCLE", "max_emails_per_cycle", "int"),
+    AppSettingDefinition(
+        "CONNECTED_AGENT", "connected_agent", "choice",
+        ("openai", "anthropic", "gemini", "cerebras", "groq", "ollama", "openclaw"),
+    ),
 )
 
 APP_SETTINGS_BY_KEY = {item.env_name: item for item in APP_SETTINGS}

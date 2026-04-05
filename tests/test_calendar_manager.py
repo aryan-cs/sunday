@@ -174,6 +174,40 @@ def test_list_events_for_day_reads_across_all_calendars(monkeypatch):
     }
 
 
+def test_list_events_for_day_skips_calendars_that_fail(monkeypatch):
+    def payload_for_calendar(kwargs):
+        calendar_id = kwargs.get("calendarId")
+        if calendar_id == "restricted@group.calendar.google.com":
+            raise RuntimeError("Forbidden")
+        return {
+            "items": [
+                {
+                    "id": "primary-1",
+                    "summary": "Class",
+                    "start": {"dateTime": "2026-04-02T09:00:00-05:00"},
+                }
+            ]
+        }
+
+    events = _FakeEvents(payload_for_calendar)
+    calendar_list = _FakeCalendarList(
+        {
+            "items": [
+                {"id": "primary"},
+                {"id": "restricted@group.calendar.google.com"},
+            ]
+        }
+    )
+    manager = object.__new__(CalendarManager)
+    manager.service = _FakeService(events, calendar_list)
+    monkeypatch.setattr("backend.calendar_manager.Config.timezone", "America/Chicago")
+    monkeypatch.setattr("backend.calendar_manager.Config.target_calendar_id", "primary")
+
+    result = manager.list_events_for_day("2026-04-02")
+
+    assert [item["id"] for item in result] == ["primary-1"]
+
+
 def test_compute_smart_reminders_skips_day_before_for_casual_lunch(monkeypatch):
     monkeypatch.setattr("backend.calendar_manager.Config.prep_time", 15)
 

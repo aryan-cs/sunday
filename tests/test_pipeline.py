@@ -505,9 +505,11 @@ async def test_process_single_email_uses_latest_prior_calendar_location_as_origi
         return None
 
     monkeypatch.setattr("backend.pipeline.parse_email", fake_parse_email)
+    monkeypatch.setattr("backend.pipeline.enrich_event_details", lambda parsed, email_data: parsed)
     monkeypatch.setattr("backend.pipeline.send_summary", fake_send_summary)
     monkeypatch.setattr("backend.pipeline.Config.default_home_location", "Home")
     monkeypatch.setattr("backend.pipeline.Config.default_work_location", "Office")
+    monkeypatch.setattr("backend.pipeline.Config.timezone", "America/Chicago")
 
     calendar = _FakeCalendar(
         day_events=[

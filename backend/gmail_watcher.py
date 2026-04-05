@@ -77,10 +77,13 @@ class GmailWatcher:
         self._account_email = self._load_account_email()
         self._seen_ids: set[str] = set()
         self._processed_ids: set[str] = _load_processed_ids()
-        self._startup_cutoff_ms = int(time.time() * 1000)
+        now_ms = int(time.time() * 1000)
+        lookback_ms = max(0, Config.gmail_initial_lookback_minutes) * 60 * 1000
+        self._startup_cutoff_ms = now_ms - lookback_ms
         log.info(
-            "Watcher baseline set at %d. Only emails received after startup will be processed.",
+            "Watcher baseline set at %d (%d-minute lookback).",
             self._startup_cutoff_ms,
+            Config.gmail_initial_lookback_minutes,
         )
 
     def _load_account_email(self) -> str:

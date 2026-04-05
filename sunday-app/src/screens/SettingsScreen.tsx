@@ -24,7 +24,6 @@ import {
   LocationPickerModal,
   SelectedLocation,
 } from "../components/LocationPickerModal";
-import { TextSegmentedSelector } from "../components/TextSegmentedSelector";
 import { TravelTypeSelector } from "../components/TravelTypeSelector";
 import { FONTS } from "../constants/fonts";
 import {
@@ -101,14 +100,14 @@ const WORKDAY_OPTIONS = [
   { label: "Sa", value: "sat" },
 ] as const;
 const CONNECTED_AGENT_OPTIONS = [
-  "Sunday",
   "OpenAI",
   "Anthropic",
   "Gemini",
+  "Cerebras",
+  "Groq",
   "Ollama",
   "OpenClaw",
 ] as const;
-const BACKEND_OPTIONS = ["Self-hosted", "Vercel"] as const;
 const RECOMMENDED_TRANSCRIPTION_MODEL = "ggml-small.en-q5_1";
 const RECOMMENDED_SUMMARIZATION_MODEL = "qwen2.5-0.5b-instruct";
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select";
@@ -443,7 +442,6 @@ export function SettingsScreen() {
   const [summarizationModel, setSummarizationModel] = React.useState("qwen2.5-0.5b-instruct");
   const [transcriptionModelOptions, setTranscriptionModelOptions] = React.useState<string[]>([]);
   const [summarizationModelOptions, setSummarizationModelOptions] = React.useState<string[]>([]);
-  const [backendTarget, setBackendTarget] = React.useState("Self-hosted");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
   const saveSequenceRef = React.useRef(0);
@@ -484,6 +482,21 @@ export function SettingsScreen() {
           response.modelOptions.summarization[0] ||
           "qwen2.5-0.5b-instruct",
       );
+      const savedAgent = response.settings["CONNECTED_AGENT"];
+      if (savedAgent && typeof savedAgent === "string") {
+        const normalized = savedAgent.charAt(0).toUpperCase() + savedAgent.slice(1).toLowerCase();
+        const agentLabel = CONNECTED_AGENT_OPTIONS.find(
+          (opt) => opt.toLowerCase() === savedAgent.toLowerCase()
+        );
+        if (agentLabel) {
+          setConnectedAgent(agentLabel);
+        } else if (normalized === "Sunday") {
+          setConnectedAgent("Ollama");
+          void saveAppSettings({ CONNECTED_AGENT: "ollama" }).catch(() => undefined);
+        } else if (normalized) {
+          setConnectedAgent(normalized);
+        }
+      }
       setIsLoading(false);
     } catch (error) {
       console.warn(
@@ -655,7 +668,11 @@ export function SettingsScreen() {
 
   const confirmOptionPicker = React.useCallback(() => {
     if (activeOptionPicker === "agent") {
-      setConnectedAgent(pendingOptionValue || "Ollama");
+      const agentValue = pendingOptionValue || "Ollama";
+      setConnectedAgent(agentValue);
+      void saveAppSettings({ CONNECTED_AGENT: agentValue.toLowerCase() }).catch((err) => {
+        console.warn("[sunday] failed to save agent setting", err);
+      });
     } else if (activeOptionPicker === "transcription-model") {
       setTranscriptionModel(pendingOptionValue || "ggml-large-v3-turbo-q5_0");
     } else if (activeOptionPicker === "summarization-model") {
@@ -1329,19 +1346,6 @@ export function SettingsScreen() {
                     {connectedAgent}
                   </Text>
                 </Pressable>
-              </View>
-
-              <View style={styles.fieldRow}>
-                <View style={styles.fieldHeader}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>
-                    Backend
-                  </Text>
-                </View>
-                <TextSegmentedSelector
-                  options={BACKEND_OPTIONS}
-                  value={backendTarget}
-                  onChange={setBackendTarget}
-                />
               </View>
             </View>
           </View>

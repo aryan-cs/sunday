@@ -13,19 +13,12 @@ import Swipeable from "react-native-gesture-handler/Swipeable";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { FONTS } from "../constants/fonts";
+import { AlertEntry } from "../lib/alertEntries";
 
 const BACKGROUND = "#121212";
 const CARD = "#242424";
 const EMPTY = "#8b8b8b";
 const DELETE = "#eb4034";
-
-export type AlertEntry = {
-  id: string;
-  summary: string;
-  transcript: string;
-  createdAt: string;
-  status: "pending" | "complete" | "failed";
-};
 
 type AlertsScreenProps = {
   entries: AlertEntry[];

@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { persistRecordingFile } from "../lib/entryStore";
 import { uploadRecordingForTranscription } from "../lib/transcription";
 
 const BACKGROUND = "#121212";
@@ -24,7 +25,7 @@ const MIN_RECORDING_DURATION_MILLIS = 700;
 
 type HomeScreenProps = {
   onBackgroundPress?: () => void;
-  onTranscriptPending?: () => string;
+  onTranscriptPending?: (audioUri: string) => string;
   onTranscript?: (entryId: string, transcript: string, summary?: string) => void;
   onTranscriptError?: (entryId: string, message: string) => void;
   onRecordingChange?: (isRecording: boolean) => void;
@@ -140,12 +141,13 @@ export function HomeScreen({
         throw new Error("No recording file was produced.");
       }
 
+      const persistedRecordingUrl = await persistRecordingFile(recordingUrl);
       console.log("[sunday] recording stopped");
-      const entryId = onTranscriptPending?.();
+      const entryId = onTranscriptPending?.(persistedRecordingUrl);
       if (entryId) {
-        void transcribeRecording(entryId, recordingUrl);
+        void transcribeRecording(entryId, persistedRecordingUrl);
       } else {
-        void transcribeRecording(`${Date.now()}`, recordingUrl);
+        void transcribeRecording(`${Date.now()}`, persistedRecordingUrl);
       }
     } catch (error) {
       console.error("[sunday] failed to stop recording", error);

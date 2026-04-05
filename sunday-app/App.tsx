@@ -13,13 +13,19 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
-import { AlertEntry, AlertsScreen } from "./src/screens/AlertsScreen";
+import { AlertsScreen } from "./src/screens/AlertsScreen";
 import {
   SettingsIcon,
   RecordActiveIcon,
   RecordInactiveIcon,
   AlertIcon,
 } from "./src/components/NavIcons";
+import { AlertEntry } from "./src/lib/alertEntries";
+import {
+  deleteStoredAlertAudio,
+  loadStoredAlertEntries,
+  saveStoredAlertEntries,
+} from "./src/lib/entryStore";
 import { summarizeTranscript } from "./src/lib/transcriptSummary";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -108,6 +114,7 @@ function Main() {
   const [navVisible, setNavVisible] = React.useState(true);
   const [isRecordingActive, setIsRecordingActive] = React.useState(false);
   const [alertEntries, setAlertEntries] = React.useState<AlertEntry[]>([]);
+  const [entriesHydrated, setEntriesHydrated] = React.useState(false);
   const indicatorTranslateX = React.useMemo(
     () =>
       scrollX.interpolate({
@@ -195,7 +202,7 @@ function Main() {
     animateNavVisibility(!navVisible);
   }, [activeIndex, animateNavVisibility, navVisible]);
 
-  const handleTranscriptPending = React.useCallback(() => {
+  const handleTranscriptPending = React.useCallback((audioUri: string) => {
     const createdAt = new Date().toISOString();
     const id = `${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
     const entry: AlertEntry = {
@@ -204,6 +211,7 @@ function Main() {
       summary: "Transcription loading...",
       createdAt,
       status: "pending",
+      audioUri,
     };
     setAlertEntries((current) => [entry, ...current]);
     return id;
@@ -240,8 +248,42 @@ function Main() {
   }, []);
 
   const handleDeleteAlert = React.useCallback((entryId: string) => {
-    setAlertEntries((current) => current.filter((entry) => entry.id !== entryId));
+    setAlertEntries((current) => {
+      const entryToDelete = current.find((entry) => entry.id === entryId);
+      if (entryToDelete?.audioUri) {
+        void deleteStoredAlertAudio(entryToDelete.audioUri);
+      }
+      return current.filter((entry) => entry.id !== entryId);
+    });
   }, []);
+
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    const hydrateEntries = async () => {
+      const storedEntries = await loadStoredAlertEntries();
+      if (isCancelled) {
+        return;
+      }
+
+      setAlertEntries(storedEntries);
+      setEntriesHydrated(true);
+    };
+
+    void hydrateEntries();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!entriesHydrated) {
+      return;
+    }
+
+    void saveStoredAlertEntries(alertEntries);
+  }, [alertEntries, entriesHydrated]);
 
   React.useEffect(() => {
     if (activeIndex !== RECORD_TAB_INDEX && !navVisible) {

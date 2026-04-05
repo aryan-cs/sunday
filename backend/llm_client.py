@@ -34,8 +34,17 @@ class LLMClient:
         ])
     """
 
-    def __init__(self) -> None:
-        self.config = Config.get_active_llm()
+    def __init__(self, provider: str | None = None) -> None:
+        if provider is not None:
+            cfg = Config.llm_providers.get(provider)
+            if not cfg:
+                raise ConfigurationError(
+                    f"Unknown LLM provider: {provider!r}. "
+                    f"Valid options: {list(Config.llm_providers.keys())}"
+                )
+            self.config = {**cfg, "provider_name": provider}
+        else:
+            self.config = Config.get_active_llm()
         self.provider = self.config["provider_name"]
         self._validate_provider_config()
         self._request_lock = asyncio.Lock()
@@ -63,6 +72,8 @@ class LLMClient:
             return await self._gemini(messages, temp, tokens)
         if self.provider == "huggingface":
             return await self._huggingface(messages, temp, tokens)
+        if self.provider == "anthropic":
+            return await self._anthropic(messages, temp, tokens)
         return await self._openai_compatible(messages, temp, tokens)
 
     def _validate_provider_config(self) -> None:
@@ -72,12 +83,16 @@ class LLMClient:
                 f"LLM provider '{self.provider}' is missing a configured model."
             )
 
-        if self.provider != "ollama" and not self.config.get("api_key"):
+        if self.provider not in {"ollama", "anthropic"} and not self.config.get("api_key"):
             raise ConfigurationError(
                 f"LLM provider '{self.provider}' requires an API key."
             )
+        if self.provider == "anthropic" and not self.config.get("api_key"):
+            raise ConfigurationError(
+                "LLM provider 'anthropic' requires an API key (ANTHROPIC_API_KEY)."
+            )
 
-        if self.provider in {"ollama", "custom"} and not self.config.get("base_url"):
+        if self.provider in {"ollama", "custom"} and not self.config.get("base_url"):  # anthropic has hardcoded URL
             raise ConfigurationError(
                 f"LLM provider '{self.provider}' requires a base URL."
             )
@@ -307,6 +322,47 @@ class LLMClient:
         return content
 
 
+    async def _anthropic(
+        self,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """Anthropic Messages API (claude-* models)."""
+        system_parts = [m["content"] for m in messages if m["role"] == "system"]
+        chat_msgs = [m for m in messages if m["role"] != "system"]
+
+        body: dict = {
+            "model": self.config["model"],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": chat_msgs,
+        }
+        if system_parts:
+            body["system"] = "\n".join(system_parts)
+
+        headers = {
+            "x-api-key": self.config["api_key"],
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        data = await self._post_with_retries(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json_body=body,
+        )
+
+        try:
+            content = data["content"][0]["text"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise SmartCalendarError("Anthropic returned an unexpected response shape.") from exc
+
+        if not isinstance(content, str) or not content.strip():
+            raise SmartCalendarError("Anthropic returned an empty completion.")
+        return content
+
+
 def _strip_json_fences(raw: str) -> str:
     """Remove markdown code fences that some models wrap around JSON."""
     cleaned = raw.strip()
@@ -326,6 +382,24 @@ def get_llm() -> LLMClient:
     if _llm is None:
         _llm = LLMClient()
     return _llm
+
+
+_AGENT_TO_PROVIDER: dict[str, str | None] = {
+    "sunday":    None,       # use Config.active_llm (default)
+    "openai":    "openai",
+    "anthropic": "anthropic",
+    "gemini":    "gemini",
+    "cerebras":  "cerebras",
+    "groq":      "groq",
+    "ollama":    "ollama",
+    "openclaw":  "custom",
+}
+
+
+def get_llm_for_agent(agent: str) -> LLMClient:
+    """Return an LLMClient for the given frontend agent name."""
+    provider = _AGENT_TO_PROVIDER.get(agent.lower())
+    return LLMClient(provider=provider)
 
 
 async def parse_with_json(

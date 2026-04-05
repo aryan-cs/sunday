@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ActionItem } from "../lib/alertEntries";
 import { persistRecordingFile } from "../lib/entryStore";
 import { uploadRecordingForTranscription } from "../lib/transcription";
 
@@ -26,7 +27,7 @@ const MIN_RECORDING_DURATION_MILLIS = 700;
 type HomeScreenProps = {
   onBackgroundPress?: () => void;
   onTranscriptPending?: (audioUri: string) => string;
-  onTranscript?: (entryId: string, transcript: string, summary?: string) => void;
+  onTranscript?: (entryId: string, transcript: string, summary?: string, actions?: ActionItem[]) => void;
   onTranscriptError?: (entryId: string, message: string) => void;
   onRecordingChange?: (isRecording: boolean) => void;
 };
@@ -78,7 +79,7 @@ export function HomeScreen({
       const result = await uploadRecordingForTranscription(recordingUrl);
       console.log("[sunday] transcript:", result.text);
       console.log("[sunday] transcript title:", result.summary);
-      onTranscript?.(entryId, result.text, result.summary);
+      onTranscript?.(entryId, result.text, result.summary, result.actions);
     } catch (error) {
       console.error("[sunday] transcription failed", error);
       const message = error instanceof Error ? error.message : "Transcription failed.";

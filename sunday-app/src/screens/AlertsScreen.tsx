@@ -5,6 +5,7 @@ import {
   Dimensions,
   Easing,
   FlatList,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -20,7 +21,7 @@ import Swipeable from "react-native-gesture-handler/Swipeable";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { FONTS } from "../constants/fonts";
-import { AlertEntry } from "../lib/alertEntries";
+import { ActionItem, AlertEntry } from "../lib/alertEntries";
 
 const BACKGROUND = "#121212";
 const CARD = "#242424";
@@ -89,6 +90,181 @@ function CloseIcon({ size = 22, color = "#e3e3e3" }: { size?: number; color?: st
     </Svg>
   );
 }
+
+const ACTION_CARD_COLORS: Record<string, string> = {
+  calendar_event: "#1a3a2a",
+  calendar_event_conflict: "#3a2e0a",
+  reminder: "#2a2a1a",
+  social_insight: "#1a2a3a",
+  preparation: "#2a1a3a",
+  research: "#1a233a",
+  send_message: "#1a2e3a",
+};
+
+const ACTION_CARD_ACCENT: Record<string, string> = {
+  calendar_event: "#4caf85",
+  calendar_event_conflict: "#e0a020",
+  reminder: "#c9a83c",
+  social_insight: "#4c8fcf",
+  preparation: "#9c6fcf",
+  research: "#7d9bff",
+  send_message: "#3cb8cf",
+};
+
+const ACTION_TYPE_LABEL: Record<string, string> = {
+  calendar_event: "Calendar",
+  calendar_event_conflict: "⚠ Conflict",
+  reminder: "Reminder",
+  social_insight: "Insight",
+  preparation: "Prep",
+  research: "Links",
+  send_message: "Message",
+};
+
+function getActionCardBody(action: ActionItem): string {
+  switch (action.type) {
+    case "calendar_event": {
+      const parts = [action.title];
+      if (action.date) parts.push(action.date);
+      if (action.start_time) parts.push(action.start_time);
+      if (action.conflict && action.conflict_with) {
+        parts.push(`conflicts with "${action.conflict_with}"`);
+      }
+      const summary = parts.join("  ·  ");
+      if (action.description?.trim()) {
+        return `${summary}\n${action.description.trim()}`;
+      }
+      return summary;
+    }
+    case "reminder": {
+      const parts = [action.task];
+      if (action.deadline) parts.push(`by ${action.deadline}`);
+      return parts.join("  ·  ");
+    }
+    case "social_insight":
+      return `${action.person}: ${action.insight}`;
+    case "preparation":
+      return `${action.topic} — ${action.suggestion}`;
+    case "research":
+      return action.snippet ? `${action.title} — ${action.snippet}` : action.title;
+    case "send_message":
+      return `To ${action.recipient_name}: "${action.message}"`;
+  }
+}
+
+function ActionCards({ actions }: { actions: ActionItem[] }) {
+  if (actions.length === 0) return null;
+
+  return (
+    <View style={actionCardStyles.section}>
+      <Text style={actionCardStyles.sectionTitle}>Actions</Text>
+      {actions.map((action, idx) => {
+        const isConflict = action.type === "calendar_event" && action.conflict;
+        const colorKey = isConflict ? "calendar_event_conflict" : action.type;
+        const bg = ACTION_CARD_COLORS[colorKey] ?? "#1e1e1e";
+        const accent = ACTION_CARD_ACCENT[colorKey] ?? "#888888";
+        const label = ACTION_TYPE_LABEL[colorKey] ?? action.type;
+
+        const executed =
+          action.type === "calendar_event" ||
+          action.type === "reminder" ||
+          action.type === "send_message"
+            ? action.executed
+            : null;
+
+        return (
+          <View
+            key={idx}
+            style={[
+              actionCardStyles.card,
+              { backgroundColor: bg },
+              isConflict && actionCardStyles.conflictBorder,
+            ]}
+          >
+            <View style={actionCardStyles.cardHeader}>
+              <View style={[actionCardStyles.badge, { backgroundColor: accent + "33" }]}>
+                <Text style={[actionCardStyles.badgeText, { color: accent }]}>{label}</Text>
+              </View>
+              {executed !== null ? (
+                <Text style={[actionCardStyles.statusText, { color: executed ? "#4caf85" : "#888888" }]}>
+                  {executed ? "Done" : "Pending"}
+                </Text>
+              ) : null}
+            </View>
+            <Text style={actionCardStyles.bodyText}>{getActionCardBody(action)}</Text>
+            {action.type === "research" ? (
+              <Pressable
+                onPress={() => {
+                  if (action.url) {
+                    void Linking.openURL(action.url);
+                  }
+                }}
+              >
+                <Text style={actionCardStyles.linkText}>{action.url}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const actionCardStyles = StyleSheet.create({
+  section: {
+    gap: 8,
+    marginTop: 6,
+  },
+  sectionTitle: {
+    color: "#8b8b8b",
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  card: {
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 5,
+  },
+  conflictBorder: {
+    borderWidth: 1,
+    borderColor: "#e0a02066",
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  badge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontFamily: FONTS.semibold,
+    letterSpacing: 0.3,
+  },
+  statusText: {
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+  },
+  bodyText: {
+    color: "#d0d0d0",
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: FONTS.regular,
+  },
+  linkText: {
+    color: "#8ab4ff",
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: FONTS.medium,
+    textDecorationLine: "underline",
+  },
+});
 
 function formatTimestamp(isoString: string) {
   const date = new Date(isoString);
@@ -361,6 +537,16 @@ function EntryDetailModal({ entry, onClose }: EntryDetailModalProps) {
                 ]}
               />
             </View>
+          {entry.actions && entry.actions.length > 0 ? (
+            <ScrollView
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+              style={styles.actionsScroll}
+              contentContainerStyle={styles.actionsScrollContent}
+            >
+              <ActionCards actions={entry.actions} />
+            </ScrollView>
+          ) : null}
           </View>
           </View>
         </View>
@@ -808,5 +994,11 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 28,
     fontStyle: "italic",
+  },
+  actionsScroll: {
+    maxHeight: 220,
+  },
+  actionsScrollContent: {
+    paddingBottom: 8,
   },
 });

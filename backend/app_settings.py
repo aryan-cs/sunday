@@ -104,6 +104,10 @@ APP_SETTINGS: tuple[AppSettingDefinition, ...] = (
         "int",
     ),
     AppSettingDefinition("LOG_LEVEL", "log_level", "choice", _LOG_LEVEL_OPTIONS),
+    AppSettingDefinition(
+        "CONNECTED_AGENT", "connected_agent", "choice",
+        ("openai", "anthropic", "gemini", "cerebras", "groq", "ollama", "openclaw"),
+    ),
 )
 
 APP_SETTINGS_BY_KEY = {item.env_name: item for item in APP_SETTINGS}

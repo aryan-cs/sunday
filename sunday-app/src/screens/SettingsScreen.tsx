@@ -24,7 +24,6 @@ import {
   LocationPickerModal,
   SelectedLocation,
 } from "../components/LocationPickerModal";
-import { TextSegmentedSelector } from "../components/TextSegmentedSelector";
 import { TravelTypeSelector } from "../components/TravelTypeSelector";
 import {
   AdvancedSection,
@@ -117,14 +116,14 @@ const WORKDAY_OPTIONS = [
   { label: "Sa", value: "sat" },
 ] as const;
 const CONNECTED_AGENT_OPTIONS = [
-  "Sunday",
   "OpenAI",
   "Anthropic",
   "Gemini",
+  "Cerebras",
+  "Groq",
   "Ollama",
   "OpenClaw",
 ] as const;
-const BACKEND_OPTIONS = ["Self-hosted", "Vercel"] as const;
 const RECOMMENDED_TRANSCRIPTION_MODEL = "ggml-small.en-q5_1";
 const RECOMMENDED_SUMMARIZATION_MODEL = "qwen2.5-0.5b-instruct";
 const LLM_PROVIDER_OPTIONS = [
@@ -668,8 +667,6 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
   const [summarizationModel, setSummarizationModel] = React.useState("qwen2.5-0.5b-instruct");
   const [transcriptionModelOptions, setTranscriptionModelOptions] = React.useState<string[]>([]);
   const [summarizationModelOptions, setSummarizationModelOptions] = React.useState<string[]>([]);
-  const [backendTarget, setBackendTarget] = React.useState("Self-hosted");
-  const [vercelBaseUrl, setVercelBaseUrl] = React.useState("");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
   const saveSequenceRef = React.useRef(0);
@@ -710,6 +707,21 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
           response.modelOptions.summarization[0] ||
           "qwen2.5-0.5b-instruct",
       );
+      const savedAgent = response.settings["CONNECTED_AGENT"];
+      if (savedAgent && typeof savedAgent === "string") {
+        const normalized = savedAgent.charAt(0).toUpperCase() + savedAgent.slice(1).toLowerCase();
+        const agentLabel = CONNECTED_AGENT_OPTIONS.find(
+          (opt) => opt.toLowerCase() === savedAgent.toLowerCase()
+        );
+        if (agentLabel) {
+          setConnectedAgent(agentLabel);
+        } else if (normalized === "Sunday") {
+          setConnectedAgent("Ollama");
+          void saveAppSettings({ CONNECTED_AGENT: "ollama" }).catch(() => undefined);
+        } else if (normalized) {
+          setConnectedAgent(normalized);
+        }
+      }
       setIsLoading(false);
     } catch (error) {
       console.warn(
@@ -1946,6 +1958,24 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
               })()}
 
               {/* Model pickers — always visible */}
+              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                  <Text numberOfLines={1} style={styles.fieldLabel}>
+                    Agent
+                  </Text>
+                </View>
+                <Pressable onPress={() => openOptionPicker("agent")} style={styles.selectTrigger}>
+                  <Text numberOfLines={1} style={styles.selectTriggerText}>
+                    {connectedAgent}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Models</Text>
+            <View style={styles.sectionPanel}>
               <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
                 <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
                   <Text numberOfLines={1} style={styles.fieldLabel}>Transcription</Text>

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from .action_center_store import append_action_center_entries_from_pipeline_results
 from .config import Config
 from .errors import ConfigurationError
 from .logging_utils import setup_logging

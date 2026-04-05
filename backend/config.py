@@ -149,7 +149,7 @@ class Config:
     online_prep: int = int(os.getenv("ONLINE_PREP_MINUTES", "5"))
     travel_mode: str = _get_with_legacy("TRAVEL_TYPE", "DEFAULT_TRAVEL_MODE", "driving")
     auto_cleanup_hours: int = int(os.getenv("AUTO_CLEANUP_HOURS", "24"))
-    gmail_labels: list[str] = _get_csv("GMAIL_LABELS", "INBOX")
+    gmail_labels: list[str] = _get_csv("GMAIL_LABELS", "CATEGORY_PRIMARY")
     timezone: str = os.getenv("TIMEZONE", "America/Chicago")
     state_dir: str = _resolve_project_path(
         os.getenv("STATE_DIR", str(PROJECT_ROOT / ".state"))

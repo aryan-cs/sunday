@@ -374,6 +374,16 @@ Important non-secret config values:
     - `transit`
 - `PREP_TIME_MINUTES`
 - `ONLINE_PREP_MINUTES`
+- `GMAIL_LABELS`
+  - comma-separated list of Gmail label IDs to watch
+  - defaults to `CATEGORY_PRIMARY`, which is the Primary inbox tab and filters out promotions, social, and other noise
+  - set to `INBOX` to watch everything across all tabs
+  - you can watch multiple inboxes at once, for example:
+    - `CATEGORY_PRIMARY,work` — Primary tab plus a custom label named `work`
+    - `CATEGORY_PRIMARY,CATEGORY_UPDATES` — Primary and Updates tabs
+  - built-in Gmail label IDs: `INBOX`, `CATEGORY_PRIMARY`, `CATEGORY_SOCIAL`, `CATEGORY_PROMOTIONS`, `CATEGORY_UPDATES`, `CATEGORY_FORUMS`
+  - custom labels use the exact label name as it appears in Gmail
+  - also editable from the Settings page in the app
 - `POLL_INTERVAL_SECONDS`
 - `MAX_EMAILS_PER_CYCLE`
 - `TIMEZONE`
@@ -602,6 +612,5 @@ These should not be pushed.
 - [ ] Expand the Settings page with more config groups and nicer grouped controls
 - [ ] Show full transcript details when tapping an alert entry
 - [ ] Add richer actions on alert rows beyond delete
-- [ ] Emoji-first reminder formatting in the messaging layer
 - [ ] Optional phone-location support that feels invisible and production-safe
 - [ ] Better voice-note post-processing beyond short generated titles

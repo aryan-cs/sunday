@@ -292,6 +292,14 @@ const SETTINGS_SECTIONS: SettingSection[] = [
         kind: "number",
       },
       {
+        key: "GMAIL_LABELS",
+        label: "Gmail inboxes to watch",
+        description:
+          "Comma-separated label IDs. Common options: CATEGORY_PRIMARY (recommended), INBOX, CATEGORY_SOCIAL, CATEGORY_PROMOTIONS, CATEGORY_UPDATES, CATEGORY_FORUMS, or any custom label name.",
+        placeholder: "CATEGORY_PRIMARY",
+        kind: "text",
+      },
+      {
         key: "POLL_INTERVAL_SECONDS",
         label: "Inbox polling interval duration",
         kind: "number",

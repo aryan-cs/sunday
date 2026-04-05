@@ -175,7 +175,9 @@ Rules:
 - Do not invent or estimate an end time, location, meeting link, or attendees.
 - Parse dates relative to today's date which will be provided in the user prompt.
 - For Zoom/Meet/Teams links, extract the full URL from the email body.
-- For online meetings with no physical location, set location to null and is_online to true.
+- If the email mentions video call, Zoom, Google Meet, Teams, Webex, virtual, or any remote format, set is_online to true.
+- If the email describes an in-person meeting, set is_online to false.
+- If unclear, default is_online to true for meetings with a link, false otherwise.
 - If an address is partial (e.g. "Siebel 2124"), expand it to a full address if you know it;
   otherwise keep it as-is.
 """
@@ -662,6 +664,11 @@ async def parse_email(email_data: dict) -> dict:
             system=EMAIL_PARSER_SYSTEM_PROMPT,
             temperature=0.1,
         )
+        # Recover missing is_online before strict validation
+        if parsed.get("has_event") and isinstance(parsed.get("event"), dict):
+            event = parsed["event"]
+            if event.get("is_online") is None:
+                event["is_online"] = bool(event.get("meeting_link"))
         validated = ParsedEmail.model_validate(parsed)
     except (ValidationError, ValueError, TypeError) as exc:
         raise EmailParseError(
@@ -673,6 +680,58 @@ async def parse_email(email_data: dict) -> dict:
         ) from exc
 
     return validated.model_dump()
+
+
+PREP_BRIEF_SYSTEM_PROMPT = """\
+You are a proactive personal assistant. You have just read an email on behalf of the user.
+
+Your job is to prepare a short, practical briefing of what the user should know or do to be ready.
+Be specific and useful — not generic. If it's an interview, mention the company and likely prep areas.
+If it's a dinner reservation, mention the vibe and parking. If it's a flight, mention check-in and what to pack.
+
+Write in a casual, direct tone — like a smart friend texting you a heads up.
+Use short bullet points. Keep it under 120 words. No preamble like "Here's your briefing:" — just the bullets.
+Only include bullets that are genuinely useful given the specific email content.
+If there is nothing meaningful to prepare, respond with exactly: SKIP
+"""
+
+
+async def generate_prep_brief(parsed: dict, email_data: dict) -> str | None:
+    """
+    Generate a contextual preparation brief for the user based on the email.
+
+    Returns a short bullet-point string, or None if there is nothing to prepare.
+    """
+    from .llm_client import get_llm_for_agent
+    from .config import Config
+
+    user_prompt = (
+        f"Today's date: {_today_local_date()}\n\n"
+        f"Email summary: {parsed.get('summary', '')}\n"
+        f"Urgency: {parsed.get('urgency', 'none')}\n"
+        f"Action items: {', '.join(parsed.get('action_items', [])) or 'none'}\n\n"
+        f"Full email:\n"
+        f"From: {email_data.get('from', '')}\n"
+        f"Subject: {email_data.get('subject', '')}\n\n"
+        f"Body:\n{email_data.get('body', '')[:3000]}"
+    )
+
+    try:
+        raw = await get_llm_for_agent(Config.connected_agent).complete(
+            [
+                {"role": "system", "content": PREP_BRIEF_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+        )
+    except Exception as exc:
+        log.warning("Prep brief generation failed: %s", exc)
+        return None
+
+    brief = raw.strip()
+    if not brief or brief.upper() == "SKIP":
+        return None
+    return brief
 
 
 def get_calendar_readiness_issues(parsed: dict) -> list[str]:

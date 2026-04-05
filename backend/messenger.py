@@ -309,6 +309,7 @@ def format_summary(
     travel_info: dict | None = None,
     processing_notes: list[str] | None = None,
     source_email_link: str | None = None,
+    prep_brief: str | None = None,
 ) -> str:
     """Format a parsed email dict into a human-readable message."""
     del source_email_link
@@ -361,6 +362,11 @@ def format_summary(
 
         if parsed_email.get("can_wait"):
             lines.append("😌 this can wait")
+
+    if prep_brief:
+        lines.append("")
+        lines.append("🧠 heads up:")
+        lines.append(prep_brief)
 
     if notes:
         lines.append("")
@@ -491,6 +497,7 @@ async def send_summary(
     travel_info: dict | None = None,
     processing_notes: list[str] | None = None,
     source_email_link: str | None = None,
+    prep_brief: str | None = None,
 ) -> None:
     """
     Format and dispatch a summary to all configured messaging channels.
@@ -504,5 +511,6 @@ async def send_summary(
         travel_info,
         processing_notes,
         source_email_link,
+        prep_brief,
     )
     await send_text_message(message, source_email_link)

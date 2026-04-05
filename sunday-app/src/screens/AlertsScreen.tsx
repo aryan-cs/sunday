@@ -578,6 +578,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     marginRight: 12,
+    alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -728,6 +729,7 @@ const styles = StyleSheet.create({
   },
   detailTranscriptContentScrollable: {
     justifyContent: "flex-start",
+    paddingTop: 14,
   },
   detailTranscriptContentCentered: {
     justifyContent: "center",

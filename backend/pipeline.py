@@ -13,12 +13,10 @@ from zoneinfo import ZoneInfo
 
 from .calendar_manager import CalendarManager
 from .config import Config
-from .email_parser import enrich_event_details, get_calendar_readiness_issues, parse_email, summarise_parsed
+from .email_parser import enrich_event_details, generate_prep_brief, get_calendar_readiness_issues, parse_email, summarise_parsed
 from .errors import ConfigurationError, TravelEstimationError
 from .gmail_watcher import GmailWatcher
 from .messenger import format_leave_alert, send_summary, send_text_message
-from . import agent as _agent
-from .openclaw import notify_email_event as _openclaw_notify_email
 from .state_store import get_state_file
 from .travel_estimator import TravelEstimator
 
@@ -405,6 +403,10 @@ async def process_single_email(
     parsed = enrich_event_details(parsed, email_data)
     log.info("  %s", summarise_parsed(parsed))
 
+    prep_brief = await generate_prep_brief(parsed, email_data)
+    if prep_brief:
+        log.info("  → Prep brief generated (%d chars)", len(prep_brief))
+
     calendar_status = "not_applicable"
     calendar_event_link: str | None = None
     processing_notes: list[str] = []
@@ -479,22 +481,15 @@ async def process_single_email(
             calendar_event_link = calendar_result["event"].get("htmlLink")
             log.info("  → Calendar status: %s", calendar_status)
 
-    _notifiable = (
-        parsed.get("has_event")
-        or parsed.get("needs_response")
-        or parsed.get("urgency") in ("high", "medium")
+    await send_summary(
+        parsed_email=parsed,
+        calendar_status=calendar_status,
+        travel_info=travel_info,
+        processing_notes=processing_notes,
+        source_email_link=_build_gmail_thread_link(email_data),
+        prep_brief=prep_brief,
     )
-    if _notifiable:
-        await send_summary(
-            parsed_email=parsed,
-            calendar_status=calendar_status,
-            travel_info=travel_info,
-            processing_notes=processing_notes,
-            source_email_link=_build_gmail_thread_link(email_data),
-        )
-        log.info("  → Summary sent")
-    else:
-        log.info("  → Skipped notification (nothing actionable)")
+    log.info("  → Summary sent")
 
     gmail.mark_as_processed(email_data["id"])
     log.info("  → Gmail message marked as processed")
@@ -508,6 +503,7 @@ async def process_single_email(
         "email_id": email_data.get("id"),
         "subject": email_data.get("subject"),
         "has_event": parsed.get("has_event"),
+        "event": parsed.get("event"),
         "calendar_status": calendar_status,
         "calendar_event_link": calendar_event_link,
         "urgency": parsed.get("urgency"),

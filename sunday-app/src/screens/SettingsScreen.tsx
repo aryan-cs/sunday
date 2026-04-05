@@ -28,6 +28,10 @@ import { TextSegmentedSelector } from "../components/TextSegmentedSelector";
 import { TravelTypeSelector } from "../components/TravelTypeSelector";
 import { FONTS } from "../constants/fonts";
 import {
+  getConnectionPreferences,
+  saveConnectionPreferences,
+} from "../lib/connectionPreferences";
+import {
   getPhoneLocationPermissionState,
   getPhoneLocationEnabledPreference,
   requestPhoneLocationAccess,
@@ -111,8 +115,27 @@ const CONNECTED_AGENT_OPTIONS = [
 const BACKEND_OPTIONS = ["Self-hosted", "Vercel"] as const;
 const RECOMMENDED_TRANSCRIPTION_MODEL = "ggml-small.en-q5_1";
 const RECOMMENDED_SUMMARIZATION_MODEL = "qwen2.5-0.5b-instruct";
-type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select";
-type OptionSheetKind = "agent" | "transcription-model" | "summarization-model";
+const LLM_PROVIDER_OPTIONS = [
+  "gemini",
+  "openrouter",
+  "groq",
+  "cerebras",
+  "ollama",
+  "together",
+  "mistral",
+  "huggingface",
+  "custom",
+] as const;
+const TITLE_DEVICE_OPTIONS = ["auto", "cpu", "mps", "cuda"] as const;
+const LOG_LEVEL_OPTIONS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] as const;
+type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select" | "secret";
+type OptionSheetKind =
+  | "agent"
+  | "transcription-model"
+  | "summarization-model"
+  | "ACTIVE_LLM_PROVIDER"
+  | "TRANSCRIPT_TITLE_DEVICE"
+  | "LOG_LEVEL";
 
 type SettingField = {
   key: string;
@@ -126,6 +149,7 @@ type SettingField = {
 type SettingSection = {
   title: string;
   fields: SettingField[];
+  tone?: "default" | "danger";
 };
 
 type LocationSettingGroup = {
@@ -136,6 +160,13 @@ type LocationSettingGroup = {
   latitudeKey: string;
   longitudeKey: string;
   placeholder: string;
+};
+
+type ConnectionFieldConfig = {
+  key: string;
+  label: string;
+  placeholder: string;
+  secure: boolean;
 };
 
 const LOCATION_SETTING_GROUPS: LocationSettingGroup[] = [
@@ -272,6 +303,245 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       },
     ],
   },
+  {
+    title: "Provider",
+    fields: [
+      {
+        key: "ACTIVE_LLM_PROVIDER",
+        label: "LLM provider",
+        kind: "select",
+        options: [...LLM_PROVIDER_OPTIONS],
+      },
+      {
+        key: "GEMINI_MODEL",
+        label: "Gemini model",
+        kind: "text",
+      },
+      {
+        key: "OPENROUTER_MODEL",
+        label: "OpenRouter model",
+        kind: "text",
+      },
+      {
+        key: "OPENROUTER_SITE_URL",
+        label: "OpenRouter site URL",
+        kind: "text",
+      },
+      {
+        key: "OPENROUTER_APP_NAME",
+        label: "OpenRouter app name",
+        kind: "text",
+      },
+      {
+        key: "GROQ_MODEL",
+        label: "Groq model",
+        kind: "text",
+      },
+      {
+        key: "CEREBRAS_MODEL",
+        label: "Cerebras model",
+        kind: "text",
+      },
+      {
+        key: "OLLAMA_BASE_URL",
+        label: "Ollama base URL",
+        kind: "text",
+      },
+      {
+        key: "OLLAMA_MODEL",
+        label: "Ollama model",
+        kind: "text",
+      },
+      {
+        key: "TOGETHER_MODEL",
+        label: "Together model",
+        kind: "text",
+      },
+      {
+        key: "MISTRAL_MODEL",
+        label: "Mistral model",
+        kind: "text",
+      },
+      {
+        key: "HUGGINGFACE_MODEL",
+        label: "Hugging Face model",
+        kind: "text",
+      },
+      {
+        key: "CUSTOM_LLM_BASE_URL",
+        label: "Custom base URL",
+        kind: "text",
+      },
+      {
+        key: "CUSTOM_LLM_MODEL",
+        label: "Custom model",
+        kind: "text",
+      },
+    ],
+  },
+  {
+    title: "Google",
+    fields: [
+      {
+        key: "GOOGLE_CREDENTIALS_FILE",
+        label: "Credentials file",
+        kind: "text",
+      },
+      {
+        key: "GOOGLE_TOKEN_FILE",
+        label: "Token file",
+        kind: "text",
+      },
+    ],
+  },
+  {
+    title: "Messaging",
+    fields: [
+      {
+        key: "IMESSAGE_ENABLED",
+        label: "Enable iMessage",
+        kind: "boolean",
+      },
+      {
+        key: "IMESSAGE_RECIPIENT",
+        label: "iMessage recipient",
+        kind: "text",
+      },
+    ],
+  },
+  {
+    title: "Runtime",
+    fields: [
+      {
+        key: "AUTO_CLEANUP_HOURS",
+        label: "Auto cleanup hours",
+        kind: "number",
+      },
+      {
+        key: "GMAIL_LABELS",
+        label: "Gmail labels",
+        kind: "text",
+      },
+      {
+        key: "STATE_DIR",
+        label: "State directory",
+        kind: "text",
+      },
+      {
+        key: "LLM_MAX_TOKENS",
+        label: "LLM max tokens",
+        kind: "number",
+      },
+      {
+        key: "LLM_TEMPERATURE",
+        label: "LLM temperature",
+        kind: "decimal",
+      },
+      {
+        key: "LLM_REQUESTS_PER_MINUTE",
+        label: "LLM requests per minute",
+        kind: "number",
+      },
+      {
+        key: "LLM_RETRY_ATTEMPTS",
+        label: "LLM retry attempts",
+        kind: "number",
+      },
+      {
+        key: "LLM_RETRY_BASE_SECONDS",
+        label: "LLM retry base seconds",
+        kind: "decimal",
+      },
+      {
+        key: "TRANSCRIPTION_LANGUAGE",
+        label: "Transcription language",
+        kind: "text",
+      },
+      {
+        key: "TRANSCRIPTION_THREADS",
+        label: "Transcription threads",
+        kind: "number",
+      },
+      {
+        key: "TRANSCRIPT_TITLE_DEVICE",
+        label: "Summary device",
+        kind: "select",
+        options: [...TITLE_DEVICE_OPTIONS],
+      },
+      {
+        key: "TRANSCRIPT_TITLE_MAX_NEW_TOKENS",
+        label: "Summary max new tokens",
+        kind: "number",
+      },
+      {
+        key: "LOG_LEVEL",
+        label: "Log level",
+        kind: "select",
+        options: [...LOG_LEVEL_OPTIONS],
+      },
+    ],
+  },
+  {
+    title: "Danger Zone",
+    tone: "danger",
+    fields: [
+      {
+        key: "GEMINI_API_KEY",
+        label: "Gemini API key",
+        kind: "secret",
+      },
+      {
+        key: "OPENROUTER_API_KEY",
+        label: "OpenRouter API key",
+        kind: "secret",
+      },
+      {
+        key: "GROQ_API_KEY",
+        label: "Groq API key",
+        kind: "secret",
+      },
+      {
+        key: "CEREBRAS_API_KEY",
+        label: "Cerebras API key",
+        kind: "secret",
+      },
+      {
+        key: "TOGETHER_API_KEY",
+        label: "Together API key",
+        kind: "secret",
+      },
+      {
+        key: "MISTRAL_API_KEY",
+        label: "Mistral API key",
+        kind: "secret",
+      },
+      {
+        key: "HUGGINGFACE_API_KEY",
+        label: "Hugging Face API key",
+        kind: "secret",
+      },
+      {
+        key: "CUSTOM_LLM_API_KEY",
+        label: "Custom API key",
+        kind: "secret",
+      },
+      {
+        key: "GOOGLE_MAPS_API_KEY",
+        label: "Google Maps API key",
+        kind: "secret",
+      },
+      {
+        key: "TELEGRAM_BOT_TOKEN",
+        label: "Telegram bot token",
+        kind: "secret",
+      },
+      {
+        key: "TELEGRAM_CHAT_ID",
+        label: "Telegram chat ID",
+        kind: "secret",
+      },
+    ],
+  },
 ];
 
 function getKeyboardType(kind: FieldKind) {
@@ -379,6 +649,54 @@ function formatModelOptionLabel(option: string, recommendedOption: string | null
   return option === recommendedOption ? `${option} (Recommended)` : option;
 }
 
+function getConnectionFieldConfig(agent: string): ConnectionFieldConfig {
+  switch (agent) {
+    case "OpenAI":
+      return {
+        key: "OPENAI_API_KEY",
+        label: "API key",
+        placeholder: "sk-...",
+        secure: true,
+      };
+    case "Anthropic":
+      return {
+        key: "ANTHROPIC_API_KEY",
+        label: "API key",
+        placeholder: "sk-ant-...",
+        secure: true,
+      };
+    case "Gemini":
+      return {
+        key: "GEMINI_API_KEY",
+        label: "API key",
+        placeholder: "AIza...",
+        secure: true,
+      };
+    case "Ollama":
+      return {
+        key: "OLLAMA_BASE_URL",
+        label: "Endpoint URL",
+        placeholder: "http://localhost:11434",
+        secure: false,
+      };
+    case "OpenClaw":
+      return {
+        key: "OPENCLAW_BASE_URL",
+        label: "Endpoint URL",
+        placeholder: "http://localhost:8001",
+        secure: false,
+      };
+    case "Sunday":
+    default:
+      return {
+        key: "SUNDAY_API_KEY",
+        label: "API key",
+        placeholder: "Sunday key",
+        secure: true,
+      };
+  }
+}
+
 function getTimeSettingDate(value: string | boolean | undefined) {
   const date = new Date();
   date.setSeconds(0, 0);
@@ -414,7 +732,11 @@ function formatTimeForBackend(date: Date) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function SettingsScreen() {
+type SettingsScreenProps = {
+  onSegmentInteractionChange?: (isInteracting: boolean) => void;
+};
+
+export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const scrollViewRef = React.useRef<ScrollView>(null);
@@ -444,6 +766,7 @@ export function SettingsScreen() {
   const [transcriptionModelOptions, setTranscriptionModelOptions] = React.useState<string[]>([]);
   const [summarizationModelOptions, setSummarizationModelOptions] = React.useState<string[]>([]);
   const [backendTarget, setBackendTarget] = React.useState("Self-hosted");
+  const [vercelBaseUrl, setVercelBaseUrl] = React.useState("");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
   const saveSequenceRef = React.useRef(0);
@@ -536,6 +859,30 @@ export function SettingsScreen() {
   }, []);
 
   React.useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const preferences = await getConnectionPreferences();
+        if (!cancelled) {
+          setConnectedAgent(preferences.connectedAgent);
+          setBackendTarget(preferences.backendTarget);
+          setVercelBaseUrl(preferences.vercelBaseUrl);
+        }
+      } catch (error) {
+        console.warn(
+          "[sunday] failed to load connection preferences",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
@@ -612,6 +959,25 @@ export function SettingsScreen() {
     }));
   }, []);
 
+  const handleConnectedAgentChange = React.useCallback((nextValue: string) => {
+    setConnectedAgent(nextValue);
+    void saveConnectionPreferences({ connectedAgent: nextValue });
+  }, []);
+
+  const handleBackendTargetChange = React.useCallback((nextValue: string) => {
+    const normalizedTarget = nextValue === "Vercel" ? "Vercel" : "Self-hosted";
+    setBackendTarget(normalizedTarget);
+    void saveConnectionPreferences({ backendTarget: normalizedTarget });
+  }, []);
+
+  const handleVercelBaseUrlChange = React.useCallback((value: string) => {
+    setVercelBaseUrl(value);
+  }, []);
+
+  const handleVercelBaseUrlBlur = React.useCallback(() => {
+    void saveConnectionPreferences({ vercelBaseUrl });
+  }, [vercelBaseUrl]);
+
   const openTimezonePicker = React.useCallback(() => {
     setPendingTimezone(String(settings.TIMEZONE ?? "") || "America/Chicago");
     setIsTimezonePickerVisible(true);
@@ -622,6 +988,12 @@ export function SettingsScreen() {
       setActiveOptionPicker(kind);
       if (kind === "agent") {
         setPendingOptionValue(connectedAgent || "Ollama");
+      } else if (kind === "ACTIVE_LLM_PROVIDER") {
+        setPendingOptionValue(String(settings.ACTIVE_LLM_PROVIDER ?? "") || "gemini");
+      } else if (kind === "TRANSCRIPT_TITLE_DEVICE") {
+        setPendingOptionValue(String(settings.TRANSCRIPT_TITLE_DEVICE ?? "") || "auto");
+      } else if (kind === "LOG_LEVEL") {
+        setPendingOptionValue(String(settings.LOG_LEVEL ?? "") || "INFO");
       } else if (kind === "transcription-model") {
         setPendingOptionValue(transcriptionModel || "ggml-large-v3-turbo-q5_0");
       } else {
@@ -629,7 +1001,14 @@ export function SettingsScreen() {
       }
       setIsOptionPickerVisible(true);
     },
-    [connectedAgent, summarizationModel, transcriptionModel],
+    [
+      connectedAgent,
+      settings.ACTIVE_LLM_PROVIDER,
+      settings.LOG_LEVEL,
+      settings.TRANSCRIPT_TITLE_DEVICE,
+      summarizationModel,
+      transcriptionModel,
+    ],
   );
 
   const openCalendarIdEditor = React.useCallback(() => {
@@ -655,14 +1034,24 @@ export function SettingsScreen() {
 
   const confirmOptionPicker = React.useCallback(() => {
     if (activeOptionPicker === "agent") {
-      setConnectedAgent(pendingOptionValue || "Ollama");
+      handleConnectedAgentChange(pendingOptionValue || "Ollama");
+    } else if (activeOptionPicker === "ACTIVE_LLM_PROVIDER") {
+      handleTextChange("ACTIVE_LLM_PROVIDER", pendingOptionValue || "gemini");
+    } else if (activeOptionPicker === "TRANSCRIPT_TITLE_DEVICE") {
+      handleTextChange("TRANSCRIPT_TITLE_DEVICE", pendingOptionValue || "auto");
+    } else if (activeOptionPicker === "LOG_LEVEL") {
+      handleTextChange("LOG_LEVEL", pendingOptionValue || "INFO");
     } else if (activeOptionPicker === "transcription-model") {
-      setTranscriptionModel(pendingOptionValue || "ggml-large-v3-turbo-q5_0");
+      const nextValue = pendingOptionValue || "ggml-large-v3-turbo-q5_0";
+      setTranscriptionModel(nextValue);
+      handleTextChange("TRANSCRIPTION_MODEL_PATH", nextValue);
     } else if (activeOptionPicker === "summarization-model") {
-      setSummarizationModel(pendingOptionValue || "qwen2.5-0.5b-instruct");
+      const nextValue = pendingOptionValue || "qwen2.5-0.5b-instruct";
+      setSummarizationModel(nextValue);
+      handleTextChange("TRANSCRIPT_TITLE_MODEL_PATH", nextValue);
     }
     setIsOptionPickerVisible(false);
-  }, [activeOptionPicker, pendingOptionValue]);
+  }, [activeOptionPicker, handleConnectedAgentChange, handleTextChange, pendingOptionValue]);
 
   const handlePhoneLocationToggle = React.useCallback(async (nextValue: boolean) => {
     setErrorMessage(null);
@@ -770,6 +1159,16 @@ export function SettingsScreen() {
           setErrors(response.errors);
           setTranscriptionModelOptions(response.modelOptions.transcription);
           setSummarizationModelOptions(response.modelOptions.summarization);
+          setTranscriptionModel(
+            response.metadata.transcription_model_name?.trim() ||
+              response.modelOptions.transcription[0] ||
+              transcriptionModel,
+          );
+          setSummarizationModel(
+            response.metadata.summarization_model_name?.trim() ||
+              response.modelOptions.summarization[0] ||
+              summarizationModel,
+          );
           setStatusMessage("Saved");
           statusTimeoutRef.current = setTimeout(() => {
             setStatusMessage((current) => (current === "Saved" ? null : current));
@@ -787,7 +1186,7 @@ export function SettingsScreen() {
         }
       })();
     }, AUTOSAVE_DELAY_MS);
-  }, [isLoading, settings]);
+  }, [isLoading, settings, summarizationModel, transcriptionModel]);
 
   const activeLocationGroup = React.useMemo(
     () =>
@@ -841,12 +1240,37 @@ export function SettingsScreen() {
 
     return defaultPickerCoordinate(settings);
   }, [activeLocationGroup, settings]);
+  const activeConnectionField = React.useMemo(
+    () => getConnectionFieldConfig(connectedAgent),
+    [connectedAgent],
+  );
 
   const optionPickerConfig = React.useMemo(() => {
     if (activeOptionPicker === "agent") {
       return {
         title: "Agent",
         options: CONNECTED_AGENT_OPTIONS,
+        recommendedOption: null,
+      };
+    }
+    if (activeOptionPicker === "ACTIVE_LLM_PROVIDER") {
+      return {
+        title: "LLM Provider",
+        options: LLM_PROVIDER_OPTIONS,
+        recommendedOption: null,
+      };
+    }
+    if (activeOptionPicker === "TRANSCRIPT_TITLE_DEVICE") {
+      return {
+        title: "Summary Device",
+        options: TITLE_DEVICE_OPTIONS,
+        recommendedOption: null,
+      };
+    }
+    if (activeOptionPicker === "LOG_LEVEL") {
+      return {
+        title: "Log Level",
+        options: LOG_LEVEL_OPTIONS,
         recommendedOption: null,
       };
     }
@@ -1049,7 +1473,14 @@ export function SettingsScreen() {
         <>
           {SETTINGS_SECTIONS.map((section) => (
             <View key={section.title} style={styles.section}>
-              <Text style={styles.sectionTitle}>{section.title}</Text>
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  section.tone === "danger" && styles.sectionTitleDanger,
+                ]}
+              >
+                {section.title}
+              </Text>
               <View style={styles.sectionPanel}>
                 {section.title === "Locations"
                   ? (
@@ -1116,6 +1547,7 @@ export function SettingsScreen() {
                         key={field.key}
                         style={[
                           (field.kind === "boolean" ||
+                            field.kind === "select" ||
                             field.key === "TARGET_CALENDAR_ID" ||
                             isNumericPickerKey(field.key) ||
                             isTimeSettingKey(field.key) ||
@@ -1129,6 +1561,7 @@ export function SettingsScreen() {
                           style={[
                             styles.fieldHeader,
                             (field.kind === "boolean" ||
+                              field.kind === "select" ||
                               field.key === "TARGET_CALENDAR_ID" ||
                               isNumericPickerKey(field.key) ||
                               isTimeSettingKey(field.key) ||
@@ -1195,6 +1628,7 @@ export function SettingsScreen() {
                           <TravelTypeSelector
                             value={stringValue || "driving"}
                             onChange={(value) => handleTextChange(field.key, value)}
+                            onInteractionChange={onSegmentInteractionChange}
                           />
                         ) : field.kind === "choice" ? (
                           <View style={styles.choiceRow}>
@@ -1272,6 +1706,15 @@ export function SettingsScreen() {
                               {timeZoneDisplayValue || field.placeholder || "Select"}
                             </Text>
                           </Pressable>
+                        ) : field.kind === "select" ? (
+                          <Pressable
+                            onPress={() => openOptionPicker(field.key as OptionSheetKind)}
+                            style={styles.selectTrigger}
+                          >
+                            <Text numberOfLines={1} style={styles.selectTriggerText}>
+                              {stringValue || field.placeholder || "Select"}
+                            </Text>
+                          </Pressable>
                         ) : isNumericPickerKey(field.key) ? (
                           (() => {
                             const numericKey = field.key;
@@ -1304,6 +1747,7 @@ export function SettingsScreen() {
                             onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
                             placeholder={field.placeholder}
                             placeholderTextColor="#6f6f6f"
+                            secureTextEntry={field.kind === "secret"}
                             style={styles.input}
                             value={stringValue}
                           />
@@ -1331,6 +1775,26 @@ export function SettingsScreen() {
                 </Pressable>
               </View>
 
+              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                  <Text numberOfLines={1} style={styles.fieldLabel}>
+                    {activeConnectionField.label}
+                  </Text>
+                </View>
+                <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardAppearance="dark"
+                  onChangeText={(value) => handleTextChange(activeConnectionField.key, value)}
+                  onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                  placeholder={activeConnectionField.placeholder}
+                  placeholderTextColor="#6f6f6f"
+                  secureTextEntry={activeConnectionField.secure}
+                  style={[styles.input, styles.connectionInput]}
+                  value={String(settings[activeConnectionField.key] ?? "")}
+                />
+              </View>
+
               <View style={styles.fieldRow}>
                 <View style={styles.fieldHeader}>
                   <Text numberOfLines={1} style={styles.fieldLabel}>
@@ -1340,9 +1804,33 @@ export function SettingsScreen() {
                 <TextSegmentedSelector
                   options={BACKEND_OPTIONS}
                   value={backendTarget}
-                  onChange={setBackendTarget}
+                  onChange={handleBackendTargetChange}
+                  onInteractionChange={onSegmentInteractionChange}
                 />
               </View>
+
+              {backendTarget === "Vercel" ? (
+                <View style={styles.fieldRow}>
+                  <View style={styles.fieldHeader}>
+                    <Text numberOfLines={1} style={styles.fieldLabel}>
+                      Vercel URL
+                    </Text>
+                  </View>
+                  <TextInput
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardAppearance="dark"
+                    keyboardType="url"
+                    onBlur={handleVercelBaseUrlBlur}
+                    onChangeText={handleVercelBaseUrlChange}
+                    onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                    placeholder="https://your-app.vercel.app"
+                    placeholderTextColor="#6f6f6f"
+                    style={styles.input}
+                    value={vercelBaseUrl}
+                  />
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -1580,6 +2068,9 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.semibold,
     fontSize: 18,
   },
+  sectionTitleDanger: {
+    color: "#ff8f8f",
+  },
   sectionPanel: {
     borderRadius: 22,
     backgroundColor: PANEL,
@@ -1624,6 +2115,12 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL_ALT,
     fontFamily: FONTS.regular,
     fontSize: 14,
+  },
+  connectionInput: {
+    minWidth: 170,
+    maxWidth: 220,
+    textAlign: "right",
+    alignSelf: "flex-end",
   },
   timePicker: {
     width: Platform.OS === "ios" ? 118 : 128,

@@ -1,3 +1,5 @@
+import { getConnectionPreferences } from "./connectionPreferences";
+
 const PRIMARY_API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? "")
   .trim()
   .replace(/\/+$/, "");
@@ -9,13 +11,16 @@ const FALLBACK_API_BASE_URLS = (process.env.EXPO_PUBLIC_API_FALLBACK_URLS ?? "")
 let resolvedApiBaseUrl: string | null = null;
 let announcedApiBaseUrl: string | null = null;
 
-function buildApiBaseUrlCandidates(exclude: string[] = []) {
+function normalizeBaseUrl(value: string) {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function buildApiBaseUrlCandidates(preferredBaseUrl: string | null, exclude: string[] = []) {
   const unique = new Set<string>();
-  for (const candidate of [
-    resolvedApiBaseUrl,
-    PRIMARY_API_BASE_URL,
-    ...FALLBACK_API_BASE_URLS,
-  ]) {
+  const orderedCandidates = preferredBaseUrl
+    ? [preferredBaseUrl, resolvedApiBaseUrl, PRIMARY_API_BASE_URL, ...FALLBACK_API_BASE_URLS]
+    : [PRIMARY_API_BASE_URL, ...FALLBACK_API_BASE_URLS, resolvedApiBaseUrl];
+  for (const candidate of orderedCandidates) {
     if (!candidate || exclude.includes(candidate)) {
       continue;
     }
@@ -83,10 +88,15 @@ export async function fetchApi(
   init: RequestInit,
   options: FetchApiOptions = {},
 ) {
+  const connectionPreferences = await getConnectionPreferences();
+  const preferredBaseUrl =
+    connectionPreferences.backendTarget === "Vercel" && connectionPreferences.vercelBaseUrl
+      ? normalizeBaseUrl(connectionPreferences.vercelBaseUrl)
+      : null;
   const method = (init.method ?? "GET").toUpperCase();
   const attemptedBaseUrls: string[] = [];
   let lastError: unknown = null;
-  const candidates = buildApiBaseUrlCandidates();
+  const candidates = buildApiBaseUrlCandidates(preferredBaseUrl);
 
   if (!candidates.length) {
     throw new Error("No Sunday backend URLs are configured.");

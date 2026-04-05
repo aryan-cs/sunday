@@ -9,6 +9,7 @@ Exposes HTTP endpoints for:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ from .config import Config, PROJECT_ROOT
 from .day_planner import format_schedule, plan_day
 from .errors import ConfigurationError, TravelEstimationError
 from .logging_utils import setup_logging
+from .main import poll_forever
 from .pipeline import run_pipeline, send_due_leave_alerts
 from .state_store import get_state_file
 from .title_generation import fallback_transcript_title, generate_transcript_title
@@ -43,6 +45,7 @@ _MEETING_LINK_RE = re.compile(
     r"https?://\S*(?:zoom\.us|meet\.google|teams\.microsoft)\S*",
     re.IGNORECASE,
 )
+_SERVER_POLLER_DISABLE_VALUES = {"1", "true", "yes", "on"}
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -65,7 +68,29 @@ async def lifespan(app: FastAPI):
         log.error("CONFIG: %s", error)
     for warning in report["warnings"]:
         log.warning("CONFIG: %s", warning)
-    yield
+    poller_task: asyncio.Task[None] | None = None
+    poller_stop_event: asyncio.Event | None = None
+
+    if _should_start_embedded_poller():
+        poller_stop_event = asyncio.Event()
+        poller_task = asyncio.create_task(
+            poll_forever(stop_event=poller_stop_event),
+            name="sunday-embedded-poller",
+        )
+        log.info("Embedded local poller started inside FastAPI server.")
+
+    try:
+        yield
+    finally:
+        if poller_stop_event is not None:
+            poller_stop_event.set()
+        if poller_task is not None:
+            try:
+                await asyncio.wait_for(poller_task, timeout=5)
+            except asyncio.TimeoutError:
+                poller_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await poller_task
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -143,6 +168,16 @@ def _ensure_pipeline_ready() -> None:
     report = Config.validation_report()
     if report["errors"]:
         raise ConfigurationError("; ".join(report["errors"]))
+
+
+def _should_start_embedded_poller() -> bool:
+    """Return true when the local self-hosted server should run the mail poller."""
+    if os.getenv("VERCEL"):
+        return False
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    disable_value = os.getenv("DISABLE_SERVER_POLLER", "").strip().lower()
+    return disable_value not in _SERVER_POLLER_DISABLE_VALUES
 
 
 def _extract_meeting_link(description: str | None) -> str | None:
@@ -392,7 +427,7 @@ async def status():
 
 @app.get("/api/settings", response_model=AppSettingsResponse, dependencies=[Depends(_require_auth)])
 async def get_settings():
-    """Return the safe, non-secret settings editable from the Expo app."""
+    """Return the settings editable from the Expo app."""
     report = Config.validation_report()
     return {
         "settings": get_app_settings(),
@@ -409,7 +444,7 @@ async def get_settings():
 
 @app.put("/api/settings", response_model=AppSettingsResponse, dependencies=[Depends(_require_auth)])
 async def update_settings(body: AppSettingsUpdateRequest):
-    """Persist safe settings back to config.env and update runtime config."""
+    """Persist app-edited settings back to config.env and update runtime config."""
     try:
         settings = update_app_settings(body.settings)
     except ValueError as exc:

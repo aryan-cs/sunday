@@ -20,6 +20,7 @@ from .state_store import get_state_dir, get_state_file
 log = logging.getLogger(__name__)
 
 _PROCESSED_FILE = get_state_file("processed_messages.json")
+_WATCHER_STATE_FILE = get_state_file("gmail_watcher_state.json")
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -62,6 +63,37 @@ def _save_processed_ids(processed_ids: set[str]) -> None:
     _PROCESSED_FILE.write_text(json.dumps(sorted(processed_ids), indent=2))
 
 
+def _load_startup_cutoff_ms() -> tuple[int, str]:
+    """Return the watcher cutoff timestamp and a short description of its source."""
+    now_ms = int(time.time() * 1000)
+
+    if _WATCHER_STATE_FILE.exists():
+        try:
+            data = json.loads(_WATCHER_STATE_FILE.read_text())
+        except (OSError, ValueError) as exc:
+            log.warning("Could not read Gmail watcher state: %s", exc)
+        else:
+            last_poll_ms = data.get("last_poll_ms")
+            if isinstance(last_poll_ms, int) and last_poll_ms > 0:
+                return last_poll_ms, "saved_state"
+
+    if _PROCESSED_FILE.exists():
+        try:
+            processed_mtime_ms = int(_PROCESSED_FILE.stat().st_mtime * 1000)
+        except OSError as exc:
+            log.warning("Could not inspect processed email state: %s", exc)
+        else:
+            return processed_mtime_ms, "processed_state_mtime"
+
+    return now_ms, "fresh_start"
+
+
+def _save_watcher_cutoff_ms(cutoff_ms: int) -> None:
+    """Persist the watcher cutoff timestamp so restarts can resume cleanly."""
+    get_state_dir(create=True)
+    _WATCHER_STATE_FILE.write_text(json.dumps({"last_poll_ms": cutoff_ms}, indent=2))
+
+
 class GmailWatcher:
     """
     Poll Gmail for messages that arrived after startup.
@@ -77,10 +109,11 @@ class GmailWatcher:
         self._account_email = self._load_account_email()
         self._seen_ids: set[str] = set()
         self._processed_ids: set[str] = _load_processed_ids()
-        self._startup_cutoff_ms = int(time.time() * 1000)
+        self._startup_cutoff_ms, cutoff_source = _load_startup_cutoff_ms()
         log.info(
-            "Watcher baseline set at %d. Only emails received after startup will be processed.",
+            "Watcher baseline set at %d (%s). Only emails newer than that point will be processed.",
             self._startup_cutoff_ms,
+            cutoff_source,
         )
 
     def _load_account_email(self) -> str:
@@ -116,6 +149,8 @@ class GmailWatcher:
         """
         page_token: str | None = None
         new_emails: list[dict] = []
+
+        poll_started_ms = int(time.time() * 1000)
 
         try:
             while len(new_emails) < max_results:
@@ -155,6 +190,9 @@ class GmailWatcher:
                     break
         except Exception as exc:
             raise RuntimeError("Gmail list failed.") from exc
+        finally:
+            self._startup_cutoff_ms = max(self._startup_cutoff_ms, poll_started_ms)
+            _save_watcher_cutoff_ms(self._startup_cutoff_ms)
 
         return new_emails
 

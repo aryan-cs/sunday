@@ -2,6 +2,7 @@ import React from "react";
 import {
   Animated,
   LayoutChangeEvent,
+  PanResponder,
   Pressable,
   StyleSheet,
   View,
@@ -33,17 +34,28 @@ type TravelType = (typeof OPTIONS)[number]["key"];
 type TravelTypeSelectorProps = {
   value: string;
   onChange: (nextValue: TravelType) => void;
+  onInteractionChange?: (isInteracting: boolean) => void;
 };
 
-export function TravelTypeSelector({ value, onChange }: TravelTypeSelectorProps) {
+export function TravelTypeSelector({
+  value,
+  onChange,
+  onInteractionChange,
+}: TravelTypeSelectorProps) {
   const selectedIndex = Math.max(
     0,
     OPTIONS.findIndex((option) => option.key === value),
   );
   const animatedIndex = React.useRef(new Animated.Value(selectedIndex)).current;
   const [containerWidth, setContainerWidth] = React.useState(0);
+  const isDraggingRef = React.useRef(false);
+  const dragIndexRef = React.useRef(selectedIndex);
+  const isTouchActiveRef = React.useRef(false);
 
   React.useEffect(() => {
+    if (isDraggingRef.current) {
+      return;
+    }
     Animated.spring(animatedIndex, {
       toValue: selectedIndex,
       speed: 20,
@@ -60,6 +72,19 @@ export function TravelTypeSelector({ value, onChange }: TravelTypeSelectorProps)
   const itemWidth = innerWidth / OPTIONS.length || 0;
   const indicatorWidth = Math.max(0, itemWidth - INDICATOR_GAP * 2);
   const indicatorInset = Math.max(0, (itemWidth - indicatorWidth) / 2);
+  const clampIndex = React.useCallback(
+    (nextIndex: number) => Math.max(0, Math.min(OPTIONS.length - 1, nextIndex)),
+    [],
+  );
+  const getDragIndex = React.useCallback(
+    (locationX: number) => {
+      if (itemWidth <= 0) {
+        return selectedIndex;
+      }
+      return clampIndex((locationX - PADDING - itemWidth / 2) / itemWidth);
+    },
+    [clampIndex, itemWidth, selectedIndex],
+  );
   const indicatorTranslateX = React.useMemo(
     () =>
       animatedIndex.interpolate({
@@ -73,13 +98,78 @@ export function TravelTypeSelector({ value, onChange }: TravelTypeSelectorProps)
     () => Animated.multiply(indicatorTranslateX, -1),
     [indicatorTranslateX],
   );
+  const finishDrag = React.useCallback(
+    (nextIndex: number) => {
+      isDraggingRef.current = false;
+      dragIndexRef.current = nextIndex;
+      const roundedIndex = clampIndex(Math.round(nextIndex));
+      Animated.spring(animatedIndex, {
+        toValue: roundedIndex,
+        speed: 20,
+        bounciness: 10,
+        useNativeDriver: false,
+      }).start();
+      if (roundedIndex !== selectedIndex) {
+        onChange(OPTIONS[roundedIndex].key);
+      }
+    },
+    [animatedIndex, clampIndex, onChange, selectedIndex],
+  );
+  const setInteractionActive = React.useCallback(
+    (isInteracting: boolean) => {
+      if (isTouchActiveRef.current === isInteracting) {
+        return;
+      }
+      isTouchActiveRef.current = isInteracting;
+      onInteractionChange?.(isInteracting);
+    },
+    [onInteractionChange],
+  );
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onPanResponderGrant: (event) => {
+          setInteractionActive(true);
+          isDraggingRef.current = true;
+          const nextIndex = getDragIndex(event.nativeEvent.locationX);
+          dragIndexRef.current = nextIndex;
+          animatedIndex.stopAnimation();
+          animatedIndex.setValue(nextIndex);
+        },
+        onPanResponderMove: (event) => {
+          const nextIndex = getDragIndex(event.nativeEvent.locationX);
+          dragIndexRef.current = nextIndex;
+          animatedIndex.setValue(nextIndex);
+        },
+        onPanResponderRelease: () => {
+          setInteractionActive(false);
+          finishDrag(dragIndexRef.current);
+        },
+        onPanResponderTerminate: () => {
+          setInteractionActive(false);
+          finishDrag(dragIndexRef.current);
+        },
+      }),
+    [animatedIndex, finishDrag, getDragIndex, setInteractionActive],
+  );
 
   return (
-    <View style={styles.container} onLayout={handleLayout}>
+    <View
+      style={styles.container}
+      onLayout={handleLayout}
+      {...panResponder.panHandlers}
+    >
       {OPTIONS.map((option) => (
         <Pressable
           key={option.key}
-          onPress={() => onChange(option.key)}
+          onPress={() => {
+            setInteractionActive(false);
+            onChange(option.key);
+          }}
           style={styles.optionButton}
         >
           <option.Icon size={24} color={INACTIVE_ICON} />

@@ -5,6 +5,7 @@ import {
   Dimensions,
   Keyboard,
   LayoutAnimation,
+  PanResponder,
   Pressable,
   Platform,
   ScrollView,
@@ -116,8 +117,10 @@ function Main() {
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
   const [isRecordingActive, setIsRecordingActive] = React.useState(false);
+  const [isPagerScrollLocked, setIsPagerScrollLocked] = React.useState(false);
   const [alertEntries, setAlertEntries] = React.useState<AlertEntry[]>([]);
   const [entriesHydrated, setEntriesHydrated] = React.useState(false);
+  const navDragIndexRef = React.useRef(activeIndex);
   const indicatorTranslateX = React.useMemo(
     () =>
       scrollX.interpolate({
@@ -188,6 +191,53 @@ function Main() {
       scrollRef.current?.scrollTo({ x: index * SCREEN_WIDTH, animated: true });
     },
     [animateNavVisibility, navVisible],
+  );
+
+  const clampNavIndex = React.useCallback(
+    (nextIndex: number) => Math.max(0, Math.min(TABS.length - 1, nextIndex)),
+    [],
+  );
+
+  const getNavDragIndex = React.useCallback(
+    (locationX: number) => {
+      const normalizedX = Math.max(0, Math.min(NAV_CONTENT_WIDTH, locationX - NAV_HORIZONTAL_PADDING));
+      return clampNavIndex((normalizedX - NAV_ITEM_WIDTH / 2) / NAV_ITEM_WIDTH);
+    },
+    [clampNavIndex],
+  );
+
+  const finishNavDrag = React.useCallback(
+    (nextIndex: number) => {
+      const roundedIndex = clampNavIndex(Math.round(nextIndex));
+      handleTabPress(roundedIndex);
+    },
+    [clampNavIndex, handleTabPress],
+  );
+
+  const navPanResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onPanResponderGrant: (event) => {
+          Keyboard.dismiss();
+          const nextIndex = getNavDragIndex(event.nativeEvent.locationX);
+          navDragIndexRef.current = nextIndex;
+        },
+        onPanResponderMove: (event) => {
+          const nextIndex = getNavDragIndex(event.nativeEvent.locationX);
+          navDragIndexRef.current = nextIndex;
+          scrollRef.current?.scrollTo({
+            x: nextIndex * SCREEN_WIDTH,
+            animated: false,
+          });
+        },
+        onPanResponderRelease: () => finishNavDrag(navDragIndexRef.current),
+        onPanResponderTerminate: () => finishNavDrag(navDragIndexRef.current),
+      }),
+    [finishNavDrag, getNavDragIndex],
   );
 
   const handleMomentumEnd = React.useCallback(
@@ -342,6 +392,7 @@ function Main() {
         horizontal
         pagingEnabled
         bounces={false}
+        scrollEnabled={false}
         decelerationRate="fast"
         showsHorizontalScrollIndicator={false}
         scrollEventThrottle={16}
@@ -353,7 +404,9 @@ function Main() {
         onMomentumScrollEnd={handleMomentumEnd}
         contentOffset={{ x: INITIAL_INDEX * SCREEN_WIDTH, y: 0 }}
       >
-        <View style={styles.page}><SettingsScreen /></View>
+        <View style={styles.page}>
+          <SettingsScreen onSegmentInteractionChange={setIsPagerScrollLocked} />
+        </View>
         <View style={styles.page}>
           <HomeScreen
             onBackgroundPress={handleRecordBackgroundPress}
@@ -374,6 +427,7 @@ function Main() {
           styles.navBar,
           navBarAnimatedStyle,
         ]}
+        {...navPanResponder.panHandlers}
       >
         {TABS.map((tab, i) => {
           return (

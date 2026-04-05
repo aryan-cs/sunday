@@ -29,9 +29,8 @@ def _assert_startup_ready() -> None:
         raise ConfigurationError("Startup validation failed.")
 
 
-async def main() -> None:
-    _assert_startup_ready()
-
+def _log_startup_banner() -> None:
+    """Log the local polling-loop configuration once at startup."""
     log.info("Smart Calendar starting")
     log.info(
         "LLM provider: %s (%s)",
@@ -41,31 +40,58 @@ async def main() -> None:
     log.info("Poll interval: %ds", Config.poll_interval)
     log.info("Max emails per cycle: %d", Config.max_emails_per_cycle)
 
+
+async def run_cycle() -> tuple[list[dict], list[dict]]:
+    """Run one poll cycle and return processed emails plus leave alerts."""
+    results = await run_pipeline()
+    if results:
+        failures = sum(1 for result in results if "error" in result)
+        log.info(
+            "Handled %d email(s) this cycle (%d succeeded, %d failed)",
+            len(results),
+            len(results) - failures,
+            failures,
+        )
+
+    leave_alerts = await send_due_leave_alerts()
+    if leave_alerts:
+        failures = sum(1 for result in leave_alerts if "error" in result)
+        log.info(
+            "Handled %d leave alert(s) this cycle (%d succeeded, %d failed)",
+            len(leave_alerts),
+            len(leave_alerts) - failures,
+            failures,
+        )
+
+    return results, leave_alerts
+
+
+async def poll_forever(stop_event: asyncio.Event | None = None) -> None:
+    """Run the local polling loop until cancelled or the stop event is set."""
+    _assert_startup_ready()
+    _log_startup_banner()
+
     while True:
         try:
-            results = await run_pipeline()
-            if results:
-                failures = sum(1 for result in results if "error" in result)
-                log.info(
-                    "Handled %d email(s) this cycle (%d succeeded, %d failed)",
-                    len(results),
-                    len(results) - failures,
-                    failures,
-                )
-
-            leave_alerts = await send_due_leave_alerts()
-            if leave_alerts:
-                failures = sum(1 for result in leave_alerts if "error" in result)
-                log.info(
-                    "Handled %d leave alert(s) this cycle (%d succeeded, %d failed)",
-                    len(leave_alerts),
-                    len(leave_alerts) - failures,
-                    failures,
-                )
+            await run_cycle()
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             log.error("Unexpected error in main loop: %s", exc, exc_info=True)
 
-        await asyncio.sleep(Config.poll_interval)
+        if stop_event is None:
+            await asyncio.sleep(Config.poll_interval)
+            continue
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=Config.poll_interval)
+        except asyncio.TimeoutError:
+            continue
+        break
+
+
+async def main() -> None:
+    await poll_forever()
 
 
 def run() -> None:

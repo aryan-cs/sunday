@@ -10,9 +10,19 @@ export type AppSettingsResponse = {
   errors: string[];
   warnings: string[];
   metadata: Record<string, string>;
+  modelOptions: {
+    transcription: string[];
+    summarization: string[];
+  };
 };
 
 export type ReverseGeocodeResponse = {
+  label: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type GeocodeSearchResponse = {
   label: string;
   latitude: number;
   longitude: number;
@@ -33,6 +43,7 @@ function buildHeaders(includeJsonContentType = true) {
 async function parseResponse(response: Response): Promise<AppSettingsResponse> {
   const payload = (await response.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
     detail?: string;
+    model_options?: Partial<AppSettingsResponse["modelOptions"]>;
   };
   if (!response.ok) {
     throw new Error(payload.detail || `Request failed with status ${response.status}.`);
@@ -42,6 +53,10 @@ async function parseResponse(response: Response): Promise<AppSettingsResponse> {
     errors: payload.errors ?? [],
     warnings: payload.warnings ?? [],
     metadata: payload.metadata ?? {},
+    modelOptions: {
+      transcription: payload.modelOptions?.transcription ?? payload.model_options?.transcription ?? [],
+      summarization: payload.modelOptions?.summarization ?? payload.model_options?.summarization ?? [],
+    },
   };
 }
 
@@ -91,5 +106,28 @@ export async function reverseGeocodeLocation(
     label: payload.label ?? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
     latitude: payload.latitude ?? latitude,
     longitude: payload.longitude ?? longitude,
+  };
+}
+
+export async function geocodeLocationSearch(query: string): Promise<GeocodeSearchResponse> {
+  const response = await fetchApi("/api/settings/geocode", {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify({ query }),
+  }, {
+    timeoutMs: SETTINGS_REQUEST_TIMEOUT_MS,
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as Partial<GeocodeSearchResponse> & {
+    detail?: string;
+  };
+  if (!response.ok) {
+    throw new Error(payload.detail || `Request failed with status ${response.status}.`);
+  }
+
+  return {
+    label: payload.label ?? query.trim(),
+    latitude: payload.latitude ?? 0,
+    longitude: payload.longitude ?? 0,
   };
 }

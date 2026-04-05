@@ -109,6 +109,7 @@ const CONNECTED_AGENT_OPTIONS = [
 ] as const;
 const BACKEND_OPTIONS = ["Self-hosted", "Vercel"] as const;
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select";
+type OptionSheetKind = "agent" | "transcription-model" | "summarization-model";
 
 type SettingField = {
   key: string;
@@ -197,7 +198,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       },
       {
         key: "TEXT_EMAIL_LINKS",
-        label: "Include email links in texts",
+        label: "Text email links with reminders",
         kind: "boolean",
       },
     ],
@@ -263,7 +264,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       },
       {
         key: "MAX_EMAILS_PER_CYCLE",
-        label: "Maximum emails per cycle",
+        label: "Maximum emails to check per cycle",
         kind: "number",
       },
     ],
@@ -421,12 +422,20 @@ export function SettingsScreen() {
   const [warnings, setWarnings] = React.useState<string[]>([]);
   const [errors, setErrors] = React.useState<string[]>([]);
   const [activeLocationGroupId, setActiveLocationGroupId] = React.useState<LocationSettingGroup["id"] | null>(null);
+  const [isOptionPickerVisible, setIsOptionPickerVisible] = React.useState(false);
+  const [isOptionPickerMounted, setIsOptionPickerMounted] = React.useState(false);
   const [isTimezonePickerVisible, setIsTimezonePickerVisible] = React.useState(false);
   const [isTimezonePickerMounted, setIsTimezonePickerMounted] = React.useState(false);
   const [isEditingCalendarId, setIsEditingCalendarId] = React.useState(false);
   const [calendarDisplayWidth, setCalendarDisplayWidth] = React.useState(0);
+  const [activeOptionPicker, setActiveOptionPicker] = React.useState<OptionSheetKind | null>(null);
+  const [pendingOptionValue, setPendingOptionValue] = React.useState("");
   const [pendingTimezone, setPendingTimezone] = React.useState("");
   const [connectedAgent, setConnectedAgent] = React.useState("Ollama");
+  const [transcriptionModel, setTranscriptionModel] = React.useState("ggml-large-v3-turbo-q5_0");
+  const [summarizationModel, setSummarizationModel] = React.useState("qwen2.5-0.5b-instruct");
+  const [transcriptionModelOptions, setTranscriptionModelOptions] = React.useState<string[]>([]);
+  const [summarizationModelOptions, setSummarizationModelOptions] = React.useState<string[]>([]);
   const [backendTarget, setBackendTarget] = React.useState("Self-hosted");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
@@ -434,6 +443,8 @@ export function SettingsScreen() {
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const optionBackdropOpacity = React.useRef(new Animated.Value(0)).current;
+  const optionSheetTranslateY = React.useRef(new Animated.Value(28)).current;
   const timezoneBackdropOpacity = React.useRef(new Animated.Value(0)).current;
   const timezoneSheetTranslateY = React.useRef(new Animated.Value(28)).current;
   const calendarEditorProgress = React.useRef(new Animated.Value(0)).current;
@@ -454,6 +465,18 @@ export function SettingsScreen() {
       setSettingsMetadata(response.metadata ?? {});
       setWarnings(response.warnings);
       setErrors(response.errors);
+      setTranscriptionModelOptions(response.modelOptions.transcription);
+      setSummarizationModelOptions(response.modelOptions.summarization);
+      setTranscriptionModel(
+        response.metadata.transcription_model_name?.trim() ||
+          response.modelOptions.transcription[0] ||
+          "ggml-large-v3-turbo-q5_0",
+      );
+      setSummarizationModel(
+        response.metadata.summarization_model_name?.trim() ||
+          response.modelOptions.summarization[0] ||
+          "qwen2.5-0.5b-instruct",
+      );
       setIsLoading(false);
     } catch (error) {
       console.warn(
@@ -587,6 +610,21 @@ export function SettingsScreen() {
     setIsTimezonePickerVisible(true);
   }, [settings.TIMEZONE]);
 
+  const openOptionPicker = React.useCallback(
+    (kind: OptionSheetKind) => {
+      setActiveOptionPicker(kind);
+      if (kind === "agent") {
+        setPendingOptionValue(connectedAgent || "Ollama");
+      } else if (kind === "transcription-model") {
+        setPendingOptionValue(transcriptionModel || "ggml-large-v3-turbo-q5_0");
+      } else {
+        setPendingOptionValue(summarizationModel || "qwen2.5-0.5b-instruct");
+      }
+      setIsOptionPickerVisible(true);
+    },
+    [connectedAgent, summarizationModel, transcriptionModel],
+  );
+
   const openCalendarIdEditor = React.useCallback(() => {
     setIsEditingCalendarId(true);
   }, []);
@@ -599,10 +637,25 @@ export function SettingsScreen() {
     setIsTimezonePickerVisible(false);
   }, []);
 
+  const closeOptionPicker = React.useCallback(() => {
+    setIsOptionPickerVisible(false);
+  }, []);
+
   const confirmTimezonePicker = React.useCallback(() => {
     handleTextChange("TIMEZONE", pendingTimezone || "America/Chicago");
     setIsTimezonePickerVisible(false);
   }, [handleTextChange, pendingTimezone]);
+
+  const confirmOptionPicker = React.useCallback(() => {
+    if (activeOptionPicker === "agent") {
+      setConnectedAgent(pendingOptionValue || "Ollama");
+    } else if (activeOptionPicker === "transcription-model") {
+      setTranscriptionModel(pendingOptionValue || "ggml-large-v3-turbo-q5_0");
+    } else if (activeOptionPicker === "summarization-model") {
+      setSummarizationModel(pendingOptionValue || "qwen2.5-0.5b-instruct");
+    }
+    setIsOptionPickerVisible(false);
+  }, [activeOptionPicker, pendingOptionValue]);
 
   const handlePhoneLocationToggle = React.useCallback(async (nextValue: boolean) => {
     setErrorMessage(null);
@@ -708,6 +761,8 @@ export function SettingsScreen() {
           setSettingsMetadata(response.metadata ?? {});
           setWarnings(response.warnings);
           setErrors(response.errors);
+          setTranscriptionModelOptions(response.modelOptions.transcription);
+          setSummarizationModelOptions(response.modelOptions.summarization);
           setStatusMessage("Saved");
           statusTimeoutRef.current = setTimeout(() => {
             setStatusMessage((current) => (current === "Saved" ? null : current));
@@ -779,6 +834,94 @@ export function SettingsScreen() {
 
     return defaultPickerCoordinate(settings);
   }, [activeLocationGroup, settings]);
+
+  const optionPickerConfig = React.useMemo(() => {
+    if (activeOptionPicker === "agent") {
+      return {
+        title: "Agent",
+        options: CONNECTED_AGENT_OPTIONS,
+      };
+    }
+    if (activeOptionPicker === "transcription-model") {
+      return {
+        title: "Transcription Model",
+        options:
+          transcriptionModelOptions.length > 0
+            ? transcriptionModelOptions
+            : [transcriptionModel],
+      };
+    }
+    if (activeOptionPicker === "summarization-model") {
+      return {
+        title: "Summarization Model",
+        options:
+          summarizationModelOptions.length > 0
+            ? summarizationModelOptions
+            : [summarizationModel],
+      };
+    }
+    return null;
+  }, [activeOptionPicker, summarizationModel, summarizationModelOptions, transcriptionModel, transcriptionModelOptions]);
+
+  React.useEffect(() => {
+    if (isOptionPickerVisible) {
+      setIsOptionPickerMounted(true);
+      optionBackdropOpacity.stopAnimation();
+      optionSheetTranslateY.stopAnimation();
+      optionBackdropOpacity.setValue(0);
+      optionSheetTranslateY.setValue(timezoneSheetHiddenY);
+      Animated.parallel([
+        Animated.timing(optionBackdropOpacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.spring(optionSheetTranslateY, {
+          toValue: 0,
+          speed: 11,
+          bounciness: 8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    if (!isOptionPickerMounted) {
+      return;
+    }
+
+    optionBackdropOpacity.stopAnimation();
+    optionSheetTranslateY.stopAnimation();
+    Animated.parallel([
+      Animated.timing(optionBackdropOpacity, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.timing(optionSheetTranslateY, {
+          toValue: -10,
+          duration: 110,
+          useNativeDriver: true,
+        }),
+        Animated.timing(optionSheetTranslateY, {
+          toValue: timezoneSheetHiddenY,
+          duration: 320,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setIsOptionPickerMounted(false);
+      }
+    });
+  }, [
+    isOptionPickerMounted,
+    isOptionPickerVisible,
+    optionBackdropOpacity,
+    optionSheetTranslateY,
+    timezoneSheetHiddenY,
+  ]);
 
   React.useEffect(() => {
     if (isTimezonePickerVisible) {
@@ -1163,19 +1306,19 @@ export function SettingsScreen() {
           ))}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Connection</Text>
-            <View style={styles.sectionPanel}>
-              <View style={[styles.fieldRow, styles.fieldRowBorder]}>
-                <View style={styles.fieldHeader}>
+            <Text style={styles.sectionTitle}>Connections</Text>
+              <View style={styles.sectionPanel}>
+              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
                   <Text numberOfLines={1} style={styles.fieldLabel}>
-                    Connected agent
+                    Agent
                   </Text>
                 </View>
-                <TextSegmentedSelector
-                  options={CONNECTED_AGENT_OPTIONS}
-                  value={connectedAgent}
-                  onChange={setConnectedAgent}
-                />
+                <Pressable onPress={() => openOptionPicker("agent")} style={styles.selectTrigger}>
+                  <Text numberOfLines={1} style={styles.selectTriggerText}>
+                    {connectedAgent}
+                  </Text>
+                </Pressable>
               </View>
 
               <View style={styles.fieldRow}>
@@ -1189,6 +1332,43 @@ export function SettingsScreen() {
                   value={backendTarget}
                   onChange={setBackendTarget}
                 />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Models</Text>
+            <View style={styles.sectionPanel}>
+              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
+                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                  <Text numberOfLines={1} style={styles.fieldLabel}>
+                    Transcription
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => openOptionPicker("transcription-model")}
+                  style={styles.selectTrigger}
+                >
+                  <Text numberOfLines={1} style={styles.selectTriggerText}>
+                    {transcriptionModel}
+                  </Text>
+                </Pressable>
+              </View>
+
+              <View style={[styles.fieldRow, styles.fieldRowInline]}>
+                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                  <Text numberOfLines={1} style={styles.fieldLabel}>
+                    Summarization
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => openOptionPicker("summarization-model")}
+                  style={styles.selectTrigger}
+                >
+                  <Text numberOfLines={1} style={styles.selectTriggerText}>
+                    {summarizationModel}
+                  </Text>
+                </Pressable>
               </View>
             </View>
           </View>
@@ -1269,6 +1449,68 @@ export function SettingsScreen() {
                     <Picker.Item
                       key={option}
                       label={formatTimeZoneLabel(option)}
+                      value={option}
+                      color="#ffffff"
+                    />
+                  ))}
+                </Picker>
+              </View>
+            </Animated.View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {isOptionPickerMounted && optionPickerConfig ? (
+        <Modal
+          transparent
+          animationType="none"
+          visible
+          onRequestClose={closeOptionPicker}
+        >
+          <View style={styles.sheetModalRoot}>
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.sheetBackdrop, { opacity: optionBackdropOpacity }]}
+            />
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeOptionPicker} />
+            <Animated.View
+              style={[
+                styles.sheetPanel,
+                {
+                  paddingBottom: insets.bottom + 14 + TIMEZONE_SHEET_OVERDRAW,
+                  marginBottom: -TIMEZONE_SHEET_OVERDRAW,
+                  transform: [{ translateY: optionSheetTranslateY }],
+                },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable
+                  hitSlop={10}
+                  onPress={closeOptionPicker}
+                  style={[styles.sheetHeaderButton, styles.sheetHeaderButtonGhost]}
+                >
+                  <Text style={styles.sheetHeaderButtonGhostText}>Cancel</Text>
+                </Pressable>
+                <Text style={styles.sheetTitle}>{optionPickerConfig.title}</Text>
+                <Pressable
+                  hitSlop={10}
+                  onPress={confirmOptionPicker}
+                  style={[styles.sheetHeaderButton, styles.sheetHeaderButtonFilled]}
+                >
+                  <Text style={styles.sheetHeaderButtonFilledText}>Done</Text>
+                </Pressable>
+              </View>
+              <View style={styles.sheetPickerWrap}>
+                <Picker
+                  selectedValue={pendingOptionValue}
+                  onValueChange={(value) => setPendingOptionValue(String(value))}
+                  itemStyle={styles.sheetPickerItem}
+                  style={styles.sheetPicker}
+                >
+                  {optionPickerConfig.options.map((option) => (
+                    <Picker.Item
+                      key={option}
+                      label={option}
                       value={option}
                       color="#ffffff"
                     />
@@ -1388,6 +1630,7 @@ const styles = StyleSheet.create({
     flex: 0,
     width: 24,
     height: 24,
+    marginLeft: 3,
     paddingRight: 0,
     alignItems: "center",
     justifyContent: "center",

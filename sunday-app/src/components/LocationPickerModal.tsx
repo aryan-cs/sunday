@@ -1,16 +1,19 @@
 import React from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import MapView, { MapPressEvent, Marker, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { FONTS } from "../constants/fonts";
-import { reverseGeocodeLocation } from "../lib/settings";
+import { geocodeLocationSearch, reverseGeocodeLocation } from "../lib/settings";
 
 const BACKGROUND = "#121212";
 const PANEL = "#1f1f1f";
@@ -53,12 +56,15 @@ export function LocationPickerModal({
   onClose,
   onConfirm,
 }: LocationPickerModalProps) {
+  const insets = useSafeAreaInsets();
+  const mapRef = React.useRef<MapView>(null);
   const [selectedCoordinate, setSelectedCoordinate] = React.useState<Coordinate>(initialCoordinate);
   const [region, setRegion] = React.useState<Region>({
     ...initialCoordinate,
     ...DEFAULT_DELTA,
   });
   const [resolvedLabel, setResolvedLabel] = React.useState(initialLabel || "");
+  const [searchQuery, setSearchQuery] = React.useState(initialLabel || "");
   const [isResolving, setIsResolving] = React.useState(false);
   const [resolveError, setResolveError] = React.useState<string | null>(null);
   const lookupSequenceRef = React.useRef(0);
@@ -74,6 +80,7 @@ export function LocationPickerModal({
       ...DEFAULT_DELTA,
     });
     setResolvedLabel(initialLabel || "");
+    setSearchQuery(initialLabel || "");
     setResolveError(null);
   }, [initialCoordinate, initialLabel, visible]);
 
@@ -97,6 +104,7 @@ export function LocationPickerModal({
             return;
           }
           setResolvedLabel(result.label);
+          setSearchQuery(result.label);
         } catch (error) {
           if (lookupId !== lookupSequenceRef.current) {
             return;
@@ -121,6 +129,52 @@ export function LocationPickerModal({
     setSelectedCoordinate(event.nativeEvent.coordinate);
   }, []);
 
+  const handleSearchSubmit = React.useCallback(() => {
+    const query = searchQuery.trim();
+    if (!query) {
+      return;
+    }
+
+    const lookupId = ++lookupSequenceRef.current;
+    setIsResolving(true);
+    setResolveError(null);
+
+    void (async () => {
+      try {
+        const result = await geocodeLocationSearch(query);
+        if (lookupId !== lookupSequenceRef.current) {
+          return;
+        }
+
+        const nextCoordinate = {
+          latitude: result.latitude,
+          longitude: result.longitude,
+        };
+        const nextRegion = {
+          ...nextCoordinate,
+          ...DEFAULT_DELTA,
+        };
+
+        setSelectedCoordinate(nextCoordinate);
+        setRegion(nextRegion);
+        setResolvedLabel(result.label);
+        setSearchQuery(result.label);
+        mapRef.current?.animateToRegion(nextRegion, 300);
+      } catch (error) {
+        if (lookupId !== lookupSequenceRef.current) {
+          return;
+        }
+        setResolveError(
+          error instanceof Error ? error.message : "Failed to search for that place.",
+        );
+      } finally {
+        if (lookupId === lookupSequenceRef.current) {
+          setIsResolving(false);
+        }
+      }
+    })();
+  }, [searchQuery]);
+
   const handleConfirm = React.useCallback(() => {
     const label = resolvedLabel.trim() || `${selectedCoordinate.latitude.toFixed(6)}, ${selectedCoordinate.longitude.toFixed(6)}`;
     onConfirm({
@@ -139,42 +193,59 @@ export function LocationPickerModal({
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <Pressable onPress={onClose} style={[styles.headerButton, styles.headerButtonGhost]}>
-            <Text style={styles.headerButtonText}>Cancel</Text>
-          </Pressable>
-          <Text style={styles.headerTitle}>{title}</Text>
-          <Pressable onPress={handleConfirm} style={[styles.headerButton, styles.headerButtonFilled]}>
-            <Text style={styles.headerButtonFilledText}>Save</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.mapShell}>
-          <MapView
-            style={styles.map}
-            initialRegion={region}
-            onPress={handleMapPress}
-          >
-            <Marker
-              coordinate={selectedCoordinate}
-              draggable
-              onDragEnd={(event) => setSelectedCoordinate(event.nativeEvent.coordinate)}
-            />
-          </MapView>
-        </View>
-
-        <View style={styles.footer}>
-          <View style={styles.resolvedRow}>
-            {isResolving ? <ActivityIndicator color="#ffffff" size="small" /> : null}
-            <Text style={styles.resolvedText}>
-              {isResolving
-                ? "Looking up address…"
-                : resolveError
-                  ? resolveError
-                  : resolvedLabel || "Address will appear here."}
-            </Text>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={Math.max(insets.top - 4, 0)}
+          style={styles.keyboardAvoider}
+        >
+          <View style={styles.header}>
+            <Pressable onPress={onClose} style={[styles.headerButton, styles.headerButtonGhost]}>
+              <Text style={styles.headerButtonText}>Cancel</Text>
+            </Pressable>
+            <Text style={styles.headerTitle}>{title}</Text>
+            <Pressable onPress={handleConfirm} style={[styles.headerButton, styles.headerButtonFilled]}>
+              <Text style={styles.headerButtonFilledText}>Save</Text>
+            </Pressable>
           </View>
-        </View>
+
+          <View style={styles.mapShell}>
+            <MapView
+              ref={mapRef}
+              style={styles.map}
+              initialRegion={region}
+              onPress={handleMapPress}
+            >
+              <Marker
+                coordinate={selectedCoordinate}
+                draggable
+                onDragEnd={(event) => setSelectedCoordinate(event.nativeEvent.coordinate)}
+              />
+            </MapView>
+          </View>
+
+          <View style={styles.footer}>
+            <View style={styles.resolvedRow}>
+              {isResolving ? <ActivityIndicator color="#ffffff" size="small" /> : null}
+              <TextInput
+                autoCapitalize="words"
+                autoCorrect={false}
+                blurOnSubmit
+                keyboardAppearance="dark"
+                onChangeText={setSearchQuery}
+                onSubmitEditing={handleSearchSubmit}
+                placeholder="Search for a place or address"
+                placeholderTextColor={MUTED}
+                returnKeyType="search"
+                style={[
+                  styles.resolvedInput,
+                  resolveError && styles.resolvedInputError,
+                ]}
+                value={searchQuery}
+              />
+            </View>
+            {resolveError ? <Text style={styles.resolveErrorText}>{resolveError}</Text> : null}
+          </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
@@ -184,6 +255,9 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: BACKGROUND,
+  },
+  keyboardAvoider: {
+    flex: 1,
   },
   header: {
     flexDirection: "row",
@@ -252,11 +326,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  resolvedText: {
+  resolvedInput: {
     flex: 1,
     color: TEXT,
     fontSize: 14,
-    lineHeight: 20,
+    fontFamily: FONTS.regular,
+    paddingVertical: 0,
+  },
+  resolvedInputError: {
+    color: "#ff9d57",
+  },
+  resolveErrorText: {
+    marginTop: 8,
+    color: "#ff9d57",
+    fontSize: 13,
+    lineHeight: 18,
     fontFamily: FONTS.regular,
   },
 });

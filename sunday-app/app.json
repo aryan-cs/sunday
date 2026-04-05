@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "sunday",
+    "name": "Sunday",
     "slug": "sunday",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,9 +10,11 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
+        "CFBundleDisplayName": "Sunday",
+        "CFBundleName": "Sunday",
         "ITSAppUsesNonExemptEncryption": false,
-        "NSMicrophoneUsageDescription": "Allow sunday to record your voice so it can transcribe speech.",
-        "NSLocationWhenInUseUsageDescription": "Allow sunday to use your phone location when you enable it in settings."
+        "NSMicrophoneUsageDescription": "Allow Sunday to record your voice so it can transcribe speech.",
+        "NSLocationWhenInUseUsageDescription": "Allow Sunday to access your phone location when you enable it in settings."
       }
     },
     "plugins": [

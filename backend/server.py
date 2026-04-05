@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from .app_settings import get_app_settings, update_app_settings
 from .calendar_manager import CalendarManager
-from .config import Config
+from .config import Config, PROJECT_ROOT
 from .day_planner import format_schedule, plan_day
 from .errors import ConfigurationError, TravelEstimationError
 from .logging_utils import setup_logging
@@ -113,6 +113,7 @@ class AppSettingsResponse(BaseModel):
     errors: list[str]
     warnings: list[str]
     metadata: dict[str, str]
+    model_options: dict[str, list[str]]
 
 
 class ReverseGeocodeRequest(BaseModel):
@@ -121,6 +122,16 @@ class ReverseGeocodeRequest(BaseModel):
 
 
 class ReverseGeocodeResponse(BaseModel):
+    label: str
+    latitude: float
+    longitude: float
+
+
+class GeocodeSearchRequest(BaseModel):
+    query: str
+
+
+class GeocodeSearchResponse(BaseModel):
     label: str
     latitude: float
     longitude: float
@@ -174,6 +185,52 @@ async def _reverse_geocode_label(latitude: float, longitude: float) -> str:
     return fallback
 
 
+async def _geocode_search(query: str) -> tuple[str, float, float]:
+    """Resolve a freeform location query to a cleaned label and coordinates."""
+    cleaned_query = query.strip()
+    if not cleaned_query:
+        raise HTTPException(status_code=422, detail="Search query cannot be empty.")
+    if not Config.google_maps_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Google Maps geocoding is not configured on the backend.",
+        )
+
+    params: dict[str, str] = {
+        "address": cleaned_query,
+        "key": Config.google_maps_key,
+    }
+    bounds = TravelEstimator._local_search_bounds()
+    if bounds:
+        params["bounds"] = bounds
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(TravelEstimator.GEOCODE_URL, params=params)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        log.warning("Geocode search failed for %s: %s", cleaned_query, exc)
+        raise HTTPException(status_code=502, detail="Failed to search for that location.") from exc
+
+    payload = response.json()
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        raise HTTPException(status_code=404, detail="No matching location was found.")
+
+    first_result = results[0]
+    geometry = first_result.get("geometry") or {}
+    location = geometry.get("location") or {}
+    latitude = location.get("lat")
+    longitude = location.get("lng")
+    if not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float)):
+        raise HTTPException(status_code=502, detail="The geocoding result was missing coordinates.")
+
+    label = TravelEstimator._clean_formatted_address(
+        str(first_result.get("formatted_address") or cleaned_query)
+    )
+    return label, float(latitude), float(longitude)
+
+
 def _resolve_target_calendar_label() -> str:
     """Return a friendly display name for the configured write calendar."""
     target_calendar_id = Config.target_calendar_id.strip() or "primary"
@@ -190,6 +247,63 @@ def _resolve_target_calendar_label() -> str:
 
     summary = str(calendar.get("summary") or "").strip()
     return summary or target_calendar_id
+
+
+def _display_model_name(model_path: str) -> str:
+    path = Path(model_path)
+    return path.stem if path.is_file() else path.name
+
+
+def _discover_transcription_models() -> list[str]:
+    names: set[str] = set()
+    roots = {
+        PROJECT_ROOT / "models" / "transcription",
+        PROJECT_ROOT / "models" / "audio",
+        Path(Config.transcription_model_path).parent,
+    }
+
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for candidate in root.rglob("*.bin"):
+            if candidate.is_file():
+                names.add(candidate.stem)
+
+    names.add(_display_model_name(Config.transcription_model_path))
+    return sorted(names, key=str.lower)
+
+
+def _discover_summarization_models() -> list[str]:
+    names: set[str] = set()
+    configured_path = Path(Config.transcript_title_model_path)
+    roots = {
+        PROJECT_ROOT / "models" / "text",
+        configured_path if configured_path.is_dir() else configured_path.parent,
+    }
+
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for config_file in root.rglob("config.json"):
+            parent = config_file.parent
+            has_weights = any(parent.glob("*.safetensors")) or any(parent.glob("pytorch_model*.bin"))
+            if parent.is_dir() and has_weights:
+                names.add(config_file.parent.name)
+
+    configured_name = _display_model_name(Config.transcript_title_model_path)
+    configured_dir = configured_path if configured_path.is_dir() else configured_path.parent
+    if configured_dir.exists() and (
+        any(configured_dir.glob("*.safetensors")) or any(configured_dir.glob("pytorch_model*.bin"))
+    ):
+        names.add(configured_name)
+    return sorted(names, key=str.lower)
+
+
+def _settings_model_options() -> dict[str, list[str]]:
+    return {
+        "transcription": _discover_transcription_models(),
+        "summarization": _discover_summarization_models(),
+    }
 
 
 def _map_calendar_event(item: dict) -> dict:
@@ -277,7 +391,10 @@ async def get_settings():
         "warnings": report["warnings"],
         "metadata": {
             "target_calendar_label": _resolve_target_calendar_label(),
+            "transcription_model_name": _display_model_name(Config.transcription_model_path),
+            "summarization_model_name": _display_model_name(Config.transcript_title_model_path),
         },
+        "model_options": _settings_model_options(),
     }
 
 
@@ -296,7 +413,10 @@ async def update_settings(body: AppSettingsUpdateRequest):
         "warnings": report["warnings"],
         "metadata": {
             "target_calendar_label": _resolve_target_calendar_label(),
+            "transcription_model_name": _display_model_name(Config.transcription_model_path),
+            "summarization_model_name": _display_model_name(Config.transcript_title_model_path),
         },
+        "model_options": _settings_model_options(),
     }
 
 
@@ -312,6 +432,21 @@ async def reverse_geocode_settings_location(body: ReverseGeocodeRequest):
         "label": label,
         "latitude": body.latitude,
         "longitude": body.longitude,
+    }
+
+
+@app.post(
+    "/api/settings/geocode",
+    response_model=GeocodeSearchResponse,
+    dependencies=[Depends(_require_auth)],
+)
+async def geocode_settings_location(body: GeocodeSearchRequest):
+    """Resolve a typed location query into map coordinates and a saved label."""
+    label, latitude, longitude = await _geocode_search(body.query)
+    return {
+        "label": label,
+        "latitude": latitude,
+        "longitude": longitude,
     }
 
 

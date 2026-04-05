@@ -11,7 +11,7 @@ The current mobile flow is:
 2. tap again to stop
 3. the phone uploads audio to your Mac backend
 4. the Mac transcribes it with a local Whisper model
-5. the Mac generates a five-word title with a local Qwen model
+5. the Mac generates a short title with a local text model
 6. the app adds the result to the Alerts page
 
 ## Table of Contents
@@ -20,15 +20,16 @@ The current mobile flow is:
 2. [Project Layout](#project-layout)
 3. [What You Need](#what-you-need)
 4. [Setup From Scratch](#setup-from-scratch)
-5. [Configuration Guide](#configuration-guide)
-6. [Running Sunday](#running-sunday)
-7. [Expo App](#expo-app)
-8. [Recording and Transcription](#recording-and-transcription)
-9. [Settings Page](#settings-page)
-10. [API Endpoints](#api-endpoints)
-11. [Troubleshooting](#troubleshooting)
-12. [Development](#development)
-13. [To-Do](#to-do)
+5. [Local Models](#local-models)
+6. [Configuration Guide](#configuration-guide)
+7. [Running Sunday](#running-sunday)
+8. [Expo App](#expo-app)
+9. [Recording and Transcription](#recording-and-transcription)
+10. [Settings Page](#settings-page)
+11. [API Endpoints](#api-endpoints)
+12. [Troubleshooting](#troubleshooting)
+13. [Development](#development)
+14. [To-Do](#to-do)
 
 ## How It Works
 
@@ -59,7 +60,7 @@ Key behavior:
 record on phone
   -> upload audio to Mac backend
   -> local Whisper transcription on Mac
-  -> local Qwen title generation on Mac
+  -> local title generation on Mac
   -> alerts list entry in app
 ```
 
@@ -120,7 +121,7 @@ For local voice-note transcription and title generation, you also need local mod
 
 - Whisper model:
   - `models/transcription/ggml-large-v3-turbo-q5_0.bin`
-- Qwen title model:
+- text title model:
   - `models/text/qwen2.5-0.5b-instruct/`
 
 Those model files are intentionally ignored by git.
@@ -228,19 +229,126 @@ If you set `CRON_SECRET` in [config.env](/Users/aryan/Desktop/sunday/config.env)
 
 ### 10. Put the local models in place
 
-Whisper transcription model:
+Default transcription model:
 
 - [models/transcription/ggml-large-v3-turbo-q5_0.bin](/Users/aryan/Desktop/sunday/models/transcription/ggml-large-v3-turbo-q5_0.bin)
 
-Qwen title model:
+Default title model:
 
 - [models/text/qwen2.5-0.5b-instruct](/Users/aryan/Desktop/sunday/models/text/qwen2.5-0.5b-instruct)
 
-To download Qwen:
+To download the default title model:
 
 ```bash
 mkdir -p models/text/qwen2.5-0.5b-instruct
 uv run hf download Qwen/Qwen2.5-0.5B-Instruct --local-dir models/text/qwen2.5-0.5b-instruct
+```
+
+## Local Models
+
+The repo does not ship model binaries or weight folders. They stay local in:
+
+- [models/transcription](/Users/aryan/Desktop/sunday/models/transcription)
+- [models/text](/Users/aryan/Desktop/sunday/models/text)
+
+`models/` is ignored by git on purpose.
+
+The Settings page only shows models that are fully present on disk:
+
+- transcription models are discovered from `.bin` files in the transcription/audio model folders
+- summarization models are discovered from local Transformers model folders that include both config files and real weights
+
+### Recommended model choices
+
+For transcription:
+
+- Best quality on a reasonably strong Mac:
+  - `ggml-large-v3-turbo-q5_0`
+- Best default balance for most local setups:
+  - `ggml-small.en-q5_1`
+- Faster / lighter:
+  - `ggml-base.en-q5_1`
+- Lightest option when you care most about speed:
+  - `ggml-tiny.en-q5_1`
+
+For title generation / summarization:
+
+- Best overall current recommendation:
+  - `qwen2.5-0.5b-instruct`
+- Faster and lighter:
+  - `smollm2-360m-instruct`
+- Smallest local option:
+  - `smollm2-135m-instruct`
+
+### Suggested pairings
+
+- Strongest local quality:
+  - `ggml-large-v3-turbo-q5_0` + `qwen2.5-0.5b-instruct`
+- Good everyday local default:
+  - `ggml-small.en-q5_1` + `qwen2.5-0.5b-instruct`
+- Faster / lighter self-hosted dev setup:
+  - `ggml-base.en-q5_1` + `smollm2-360m-instruct`
+- Lowest-resource local setup:
+  - `ggml-tiny.en-q5_1` + `smollm2-135m-instruct`
+
+### Download examples
+
+Download a few transcription models:
+
+```bash
+cd /Users/aryan/Desktop/sunday
+uv run python - <<'PY'
+from huggingface_hub import hf_hub_download
+
+for filename in [
+    "ggml-tiny.en-q5_1.bin",
+    "ggml-base.en-q5_1.bin",
+    "ggml-small.en-q5_1.bin",
+]:
+    hf_hub_download(
+        repo_id="ggerganov/whisper.cpp",
+        filename=filename,
+        local_dir="models/transcription",
+    )
+PY
+```
+
+Download a few summarization models:
+
+```bash
+cd /Users/aryan/Desktop/sunday
+uv run python - <<'PY'
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="Qwen/Qwen2.5-0.5B-Instruct",
+    local_dir="models/text/qwen2.5-0.5b-instruct",
+)
+snapshot_download(
+    repo_id="HuggingFaceTB/SmolLM2-360M-Instruct",
+    local_dir="models/text/smollm2-360m-instruct",
+)
+snapshot_download(
+    repo_id="HuggingFaceTB/SmolLM2-135M-Instruct",
+    local_dir="models/text/smollm2-135m-instruct",
+)
+PY
+```
+
+### Point Sunday at a specific model
+
+Update [config.env](/Users/aryan/Desktop/sunday/config.env):
+
+```env
+TRANSCRIPTION_MODEL_PATH=models/transcription/ggml-small.en-q5_1.bin
+TRANSCRIPT_TITLE_MODEL_PATH=models/text/qwen2.5-0.5b-instruct
+```
+
+Then restart the backend:
+
+```bash
+cd /Users/aryan/Desktop/sunday
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
 ## Configuration Guide
@@ -278,7 +386,7 @@ Transcription-related config:
 - `TRANSCRIPTION_LANGUAGE`
 - `TRANSCRIPTION_THREADS`
 - `TRANSCRIPT_TITLE_MODEL_PATH`
-  - local Qwen model folder
+  - local text-model folder used for title generation
 - `TRANSCRIPT_TITLE_DEVICE`
   - usually `auto`
 - `TRANSCRIPT_TITLE_MAX_NEW_TOKENS`
@@ -371,7 +479,7 @@ Recording currently works like this:
 4. ultra-short near-empty recordings are ignored
 5. app uploads the audio file to `POST /api/transcribe`
 6. backend transcribes with local Whisper
-7. backend generates a five-word title with local Qwen
+7. backend generates a short title with a local text model
 8. app inserts or updates an Alerts entry
 
 Current backend response for transcription includes:
@@ -397,6 +505,12 @@ Intentional limitation:
 
 - secrets are not editable in the app
 - API keys, tokens, OAuth files, and similar sensitive values stay local and manual
+
+The `Models` subsection in the app is discovery-based:
+
+- it lists local transcription models the backend can actually see
+- it lists local summarization models that appear fully downloaded
+- because model binaries are not committed, your options depend on what you have downloaded locally
 
 ## API Endpoints
 
@@ -444,7 +558,7 @@ Check:
 
 Check:
 
-- the Qwen model exists at `TRANSCRIPT_TITLE_MODEL_PATH`
+- the selected text model exists at `TRANSCRIPT_TITLE_MODEL_PATH`
 - the backend was restarted after model/config changes
 
 ### Sunday does nothing with old unread emails
@@ -490,4 +604,4 @@ These should not be pushed.
 - [ ] Add richer actions on alert rows beyond delete
 - [ ] Emoji-first reminder formatting in the messaging layer
 - [ ] Optional phone-location support that feels invisible and production-safe
-- [ ] Better voice-note post-processing beyond five-word titles
+- [ ] Better voice-note post-processing beyond short generated titles

@@ -201,7 +201,7 @@ export function HomeScreen({
           primaryAction={
             onNavigateToEntries
               ? {
-                  label: isDemo ? "Open demo walkthrough" : hasEntries ? "Open Entries" : "See Entries",
+                  label: isDemo ? "Next: open demo walkthrough" : hasEntries ? "Open Entries" : "See Entries",
                   onPress: onNavigateToEntries,
                 }
               : undefined

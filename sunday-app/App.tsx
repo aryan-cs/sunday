@@ -191,10 +191,12 @@ function Main({
   const recordIconProgress = React.useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
-  const [shouldForceDemoCoach, setShouldForceDemoCoach] = React.useState(startDemoGuideImmediately);
+  const [guidedCoachTarget, setGuidedCoachTarget] = React.useState<"record" | "alerts" | "today" | null>(
+    startDemoGuideImmediately ? "record" : null,
+  );
 
   React.useEffect(() => {
-    setShouldForceDemoCoach(startDemoGuideImmediately);
+    setGuidedCoachTarget(startDemoGuideImmediately ? "record" : null);
   }, [startDemoGuideImmediately]);
 
   React.useEffect(() => {
@@ -342,6 +344,16 @@ function Main({
     }
     animateNavVisibility(!navVisible);
   }, [activeIndex, animateNavVisibility, navVisible]);
+
+  const navigateWithGuide = React.useCallback(
+    (index: number, target: "record" | "alerts" | "today" | null = null) => {
+      if (isDemo) {
+        setGuidedCoachTarget(target);
+      }
+      handleTabPress(index);
+    },
+    [handleTabPress, isDemo],
+  );
 
   const handleTranscriptPending = React.useCallback((audioUri: string) => {
     const createdAt = new Date().toISOString();
@@ -575,15 +587,17 @@ function Main({
         <View style={styles.page}>
           <SettingsScreen
             isActive={activeIndex === 0}
-            onNavigateToRecord={() => handleTabPress(RECORD_TAB_INDEX)}
-            onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
+            onNavigateToRecord={() => navigateWithGuide(RECORD_TAB_INDEX, isDemo ? "record" : null)}
+            onNavigateToEntries={() => navigateWithGuide(ALERTS_TAB_INDEX, isDemo ? "alerts" : null)}
           />
         </View>
         <View style={styles.page}>
           <TodayScreen
             isDemo={isDemo}
             isActive={activeIndex === 1}
-            onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
+            showCoachImmediately={guidedCoachTarget === "today"}
+            onImmediateCoachConsumed={() => setGuidedCoachTarget((current) => (current === "today" ? null : current))}
+            onNavigateToEntries={() => navigateWithGuide(ALERTS_TAB_INDEX, isDemo ? "alerts" : null)}
             onNavigateToSettings={() => handleTabPress(0)}
           />
         </View>
@@ -592,10 +606,10 @@ function Main({
             isDemo={isDemo}
             isActive={activeIndex === RECORD_TAB_INDEX}
             hasEntries={alertEntries.length > 0}
-            showCoachImmediately={shouldForceDemoCoach}
+            showCoachImmediately={guidedCoachTarget === "record"}
             onBackgroundPress={handleRecordBackgroundPress}
-            onImmediateCoachConsumed={() => setShouldForceDemoCoach(false)}
-            onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
+            onImmediateCoachConsumed={() => setGuidedCoachTarget((current) => (current === "record" ? null : current))}
+            onNavigateToEntries={() => navigateWithGuide(ALERTS_TAB_INDEX, isDemo ? "alerts" : null)}
             onTranscriptPending={handleTranscriptPending}
             onTranscript={handleTranscript}
             onTranscriptError={handleTranscriptError}
@@ -607,9 +621,11 @@ function Main({
             entries={alertEntries}
             isDemo={isDemo}
             isActive={activeIndex === ALERTS_TAB_INDEX}
+            showCoachImmediately={guidedCoachTarget === "alerts"}
             onDeleteEntry={handleDeleteAlert}
-            onNavigateToToday={() => handleTabPress(1)}
-            onNavigateToRecord={() => handleTabPress(RECORD_TAB_INDEX)}
+            onImmediateCoachConsumed={() => setGuidedCoachTarget((current) => (current === "alerts" ? null : current))}
+            onNavigateToToday={() => navigateWithGuide(1, isDemo ? "today" : null)}
+            onNavigateToRecord={() => navigateWithGuide(RECORD_TAB_INDEX, isDemo ? "record" : null)}
           />
         </View>
       </ScrollView>

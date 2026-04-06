@@ -38,7 +38,9 @@ type AlertsScreenProps = {
   entries: AlertEntry[];
   isDemo?: boolean;
   isActive?: boolean;
+  showCoachImmediately?: boolean;
   onDeleteEntry?: (entryId: string) => void;
+  onImmediateCoachConsumed?: () => void;
   onNavigateToToday?: () => void;
   onNavigateToRecord?: () => void;
 };
@@ -758,15 +760,20 @@ export function AlertsScreen({
   entries,
   isDemo = false,
   isActive = true,
+  showCoachImmediately = false,
   onDeleteEntry,
+  onImmediateCoachConsumed,
   onNavigateToToday,
   onNavigateToRecord,
 }: AlertsScreenProps) {
   const insets = useSafeAreaInsets();
   const headerTopInset = insets.top + 8;
   const [selectedEntryId, setSelectedEntryId] = React.useState<string | null>(null);
+  const shouldShowCoachNow = isActive && !selectedEntryId;
   const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(
-    isActive && !selectedEntryId,
+    shouldShowCoachNow,
+    undefined,
+    { showImmediately: showCoachImmediately && shouldShowCoachNow },
   );
 
   const selectedEntry = React.useMemo(
@@ -783,6 +790,12 @@ export function AlertsScreen({
       setSelectedEntryId(null);
     }
   }, [selectedEntry, selectedEntryId]);
+
+  React.useEffect(() => {
+    if (showCoachImmediately && shouldShowCoachNow) {
+      onImmediateCoachConsumed?.();
+    }
+  }, [onImmediateCoachConsumed, shouldShowCoachNow, showCoachImmediately]);
 
   return (
     <SafeAreaView edges={[]} style={styles.safe}>
@@ -854,7 +867,7 @@ export function AlertsScreen({
         }
         primaryAction={
           firstEntryId
-            ? { label: isDemo ? "Open Start Here card" : "Open first entry", onPress: () => setSelectedEntryId(firstEntryId) }
+            ? { label: isDemo ? "Next: open Start Here card" : "Open first entry", onPress: () => setSelectedEntryId(firstEntryId) }
             : onNavigateToRecord
               ? { label: "Go to Record", onPress: onNavigateToRecord }
               : undefined

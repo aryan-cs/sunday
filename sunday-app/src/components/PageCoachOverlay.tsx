@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { FONTS } from "../constants/fonts";
 
 export const COACH_DELAY_MS = 20_000;
@@ -18,6 +18,7 @@ type PageCoachOverlayProps = {
   steps?: string[];
   primaryAction?: CoachAction;
   secondaryAction?: CoachAction;
+  highlightPrimaryAfterMs?: number;
   onDismiss: () => void;
 };
 
@@ -74,8 +75,58 @@ export function PageCoachOverlay({
   steps = [],
   primaryAction,
   secondaryAction,
+  highlightPrimaryAfterMs = COACH_DELAY_MS,
   onDismiss,
 }: PageCoachOverlayProps) {
+  const [isPrimaryHighlighted, setIsPrimaryHighlighted] = React.useState(false);
+  const pulse = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    setIsPrimaryHighlighted(false);
+    pulse.stopAnimation();
+    pulse.setValue(0);
+
+    if (!visible || !primaryAction) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setIsPrimaryHighlighted(true);
+    }, highlightPrimaryAfterMs);
+
+    return () => clearTimeout(timeout);
+  }, [highlightPrimaryAfterMs, primaryAction, pulse, visible]);
+
+  React.useEffect(() => {
+    if (!isPrimaryHighlighted) {
+      pulse.stopAnimation();
+      pulse.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 850,
+          useNativeDriver: false,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 850,
+          useNativeDriver: false,
+        }),
+      ]),
+    );
+
+    animation.start();
+    return () => {
+      animation.stop();
+      pulse.stopAnimation();
+      pulse.setValue(0);
+    };
+  }, [isPrimaryHighlighted, pulse]);
+
   if (!visible) {
     return null;
   }
@@ -117,17 +168,42 @@ export function PageCoachOverlay({
               </Pressable>
             ) : null}
             {primaryAction ? (
-              <Pressable
-                style={[styles.button, styles.primaryButton]}
-                onPress={() => {
-                  onDismiss();
-                  primaryAction.onPress();
-                }}
-              >
-                <Text style={[styles.buttonText, styles.primaryButtonText]}>
-                  {primaryAction.label}
-                </Text>
-              </Pressable>
+              <View style={styles.primaryActionWrap}>
+                {isPrimaryHighlighted ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.primaryButtonHalo,
+                      {
+                        opacity: pulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.35, 0.85],
+                        }),
+                        transform: [
+                          {
+                            scale: pulse.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [1, 1.08],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  />
+                ) : null}
+                <Pressable
+                  style={[styles.button, styles.primaryButton]}
+                  onPress={() => {
+                    onDismiss();
+                    primaryAction.onPress();
+                  }}
+                >
+                  <Text style={[styles.buttonText, styles.primaryButtonText]}>
+                    {primaryAction.label}
+                  </Text>
+                </Pressable>
+                {isPrimaryHighlighted ? <Text style={styles.primaryHint}>Tap here</Text> : null}
+              </View>
             ) : null}
           </View>
         ) : null}
@@ -210,6 +286,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
+  primaryActionWrap: {
+    position: "relative",
+    alignItems: "flex-start",
+  },
+  primaryButtonHalo: {
+    position: "absolute",
+    top: -6,
+    left: -6,
+    right: -6,
+    bottom: -6,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: "#8ab4ff",
+    shadowColor: "#8ab4ff",
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
   primaryButton: {
     backgroundColor: "#ffffff",
   },
@@ -224,6 +318,12 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: "#121212",
+  },
+  primaryHint: {
+    marginTop: 8,
+    color: "#8ab4ff",
+    fontFamily: FONTS.semibold,
+    fontSize: 13,
   },
   secondaryButtonText: {
     color: "#ffffff",

@@ -510,11 +510,15 @@ function DemoWalkthroughCard() {
 export function TodayScreen({
   isDemo = false,
   isActive = true,
+  showCoachImmediately = false,
+  onImmediateCoachConsumed,
   onNavigateToEntries,
   onNavigateToSettings,
 }: {
   isDemo?: boolean;
   isActive?: boolean;
+  showCoachImmediately?: boolean;
+  onImmediateCoachConsumed?: () => void;
   onNavigateToEntries?: () => void;
   onNavigateToSettings?: () => void;
 }) {
@@ -535,8 +539,11 @@ export function TodayScreen({
     React.useState<GeocodeSearchResponse | null>(null);
   const [isResolvingSelectedEventMapPreview, setIsResolvingSelectedEventMapPreview] =
     React.useState(false);
+  const shouldShowCoachNow = isActive && !selectedEvent && !isCalendarSettingsVisible && !isLoading;
   const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(
-    isActive && !selectedEvent && !isCalendarSettingsVisible && !isLoading,
+    shouldShowCoachNow,
+    undefined,
+    { showImmediately: showCoachImmediately && shouldShowCoachNow },
   );
   const eventLocationPreviewCacheRef = React.useRef<Record<string, GeocodeSearchResponse | null>>(
     {},
@@ -657,6 +664,12 @@ export function TodayScreen({
     () => filteredEvents.find((event) => event.id === DEMO_VOICE_EVENT_ID) ?? filteredEvents[0] ?? null,
     [filteredEvents],
   );
+
+  React.useEffect(() => {
+    if (showCoachImmediately && shouldShowCoachNow) {
+      onImmediateCoachConsumed?.();
+    }
+  }, [onImmediateCoachConsumed, shouldShowCoachNow, showCoachImmediately]);
   const selectedEventCalendarColor = React.useMemo(() => {
     if (!selectedEvent) {
       return ACCENT;
@@ -1309,7 +1322,7 @@ export function TodayScreen({
         }
         primaryAction={
           featuredEvent
-            ? { label: isDemo ? "Open sample event" : "Open first event", onPress: () => setSelectedEvent(featuredEvent) }
+            ? { label: isDemo ? "Next: open sample event" : "Open first event", onPress: () => setSelectedEvent(featuredEvent) }
             : onNavigateToSettings
               ? { label: "Open Settings", onPress: onNavigateToSettings }
               : undefined

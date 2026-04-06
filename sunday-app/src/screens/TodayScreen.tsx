@@ -44,6 +44,7 @@ const REFRESH_INTERVAL_MS = 60_000;
 const APPLE_MAPS_ICON = require("../../assets/apple-maps-icon.png");
 const GOOGLE_MAPS_ICON = require("../../assets/google-maps-icon.png");
 const WAZE_ICON = require("../../assets/waze-icon.png");
+const DEMO_VOICE_EVENT_ID = "demo-voice-created";
 const CALENDAR_COLOR_FALLBACKS = [
   "#ffffff",
   "#7ec8ff",
@@ -298,6 +299,7 @@ function EventCard({
   const secondaryTime = getSecondaryTimeLabel(event);
   const now = isEventNow(event);
   const detailLabel = event.is_online ? "Online" : event.location?.trim() || "";
+  const isDemoVoiceEvent = event.id === DEMO_VOICE_EVENT_ID;
 
   return (
     <Pressable onPress={onPress} style={[styles.card, now && styles.cardNow]}>
@@ -305,6 +307,11 @@ function EventCard({
 
       <View style={styles.cardRow}>
         <View style={styles.cardBody}>
+          {isDemoVoiceEvent ? (
+            <View style={styles.demoEventBadge}>
+              <Text style={styles.demoEventBadgeText}>Created from voice note</Text>
+            </View>
+          ) : null}
           <Text numberOfLines={2} style={styles.eventTitle}>
             {event.title}
           </Text>
@@ -485,15 +492,15 @@ function DemoWalkthroughCard() {
   return (
     <View style={styles.demoCard}>
       <Text style={styles.demoEyebrow}>Demo walkthrough</Text>
-      <Text style={styles.demoTitle}>What this screen would do with your real account</Text>
+      <Text style={styles.demoTitle}>Step 3: inspect the calendar event Sunday created</Text>
       <Text style={styles.demoBody}>
         Sunday would pull your live Google Calendar here, add events created from voice notes,
         and calculate leave-by times from your location and Maps.
       </Text>
       <View style={styles.demoSteps}>
-        <Text style={styles.demoStep}>1. Record a note with a concrete event, like a meeting at 2 PM.</Text>
-        <Text style={styles.demoStep}>2. Sunday transcribes it, extracts the event, and writes it to Google Calendar.</Text>
-        <Text style={styles.demoStep}>3. The new meeting appears here with travel timing, directions, and details.</Text>
+        <Text style={styles.demoStep}>1. Look for the event tagged “Created from voice note.”</Text>
+        <Text style={styles.demoStep}>2. Tap “Product review with Sarah” to open the full event sheet.</Text>
+        <Text style={styles.demoStep}>3. Inside it, see the calendar details, travel timing, map links, and notes Sunday organized automatically.</Text>
       </View>
     </View>
   );
@@ -1335,6 +1342,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontFamily: FONTS.regular,
+  },
+  demoEventBadge: {
+    alignSelf: "flex-start",
+    marginBottom: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(126, 200, 255, 0.16)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  demoEventBadgeText: {
+    color: "#9ad6ff",
+    fontSize: 11,
+    fontFamily: FONTS.semibold,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
   },
   separator: {
     height: 10,

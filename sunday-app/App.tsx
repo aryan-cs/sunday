@@ -67,6 +67,64 @@ const INDICATOR_EDGE_EXTENSION = 8;
 const RECORD_TAB_INDEX = 2;
 const ALERTS_TAB_INDEX = 3;
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function buildDemoVoiceEntry(): AlertEntry {
+  const today = todayIsoDate();
+  return {
+    id: "demo-alert-voice-calendar",
+    transcript:
+      "Hey, schedule a product review with Sarah for today at 2 PM at Shopify Toronto, remind me at noon to bring the Q2 deck, and text her that I'll bring printed notes.",
+    summary: "Voice note: booked product review for 2 PM",
+    createdAt: `${today}T09:15:00.000Z`,
+    status: "complete",
+    audioUri: null,
+    actions: [
+      {
+        type: "calendar_event",
+        title: "Product review with Sarah",
+        date: today,
+        start_time: "14:00",
+        end_time: "15:00",
+        location: "Shopify Toronto, 620 King St W",
+        is_online: false,
+        description: "Created from a voice note and added to Google Calendar automatically.",
+        executed: true,
+        conflict: false,
+        conflict_with: null,
+      },
+      {
+        type: "reminder",
+        task: "Bring the Q2 deck",
+        deadline: today,
+        priority: "high",
+        executed: true,
+      },
+      {
+        type: "preparation",
+        topic: "Product review with Sarah",
+        suggestion:
+          "Bring the Q2 deck and printed notes so the meeting can turn straight into decisions.",
+      },
+      {
+        type: "send_message",
+        recipient_name: "Sarah",
+        message: "Booked for 2 PM today at Shopify Toronto. I'll bring printed notes.",
+        phone: "+14165550123",
+        executed: true,
+      },
+    ],
+  };
+}
+
+function normalizeDemoSeedEntries(entries: AlertEntry[]) {
+  const voiceEntry = buildDemoVoiceEntry();
+  const withoutVoiceEntry = entries.filter((entry) => entry.id !== voiceEntry.id);
+  return [voiceEntry, ...withoutVoiceEntry].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 function getIndicatorTarget(index: number) {
   if (index === 0 || index === TABS.length - 1) {
     return index * NAV_ITEM_WIDTH - INDICATOR_EDGE_EXTENSION;
@@ -385,7 +443,7 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
       const merged =
         isDemo && seedEntries.length > 0
           ? [
-              ...seedEntries,
+              ...normalizeDemoSeedEntries(seedEntries),
               ...storedEntries.filter((entry) => !entry.id.startsWith("demo-")),
             ]
           : seedEntries.length > 0
@@ -515,7 +573,12 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
           />
         </View>
         <View style={styles.page}>
-          <AlertsScreen entries={alertEntries} isDemo={isDemo} onDeleteEntry={handleDeleteAlert} />
+          <AlertsScreen
+            entries={alertEntries}
+            isDemo={isDemo}
+            onDeleteEntry={handleDeleteAlert}
+            onNavigateToToday={() => handleTabPress(1)}
+          />
         </View>
       </ScrollView>
 
@@ -617,12 +680,13 @@ export default function App() {
           try {
             const res = await demoLogin();
             await saveAuthState(res.token, true);
-            setSeedEntries((res.demo_entries ?? []) as AlertEntry[]);
+            setSeedEntries(normalizeDemoSeedEntries((res.demo_entries ?? []) as AlertEntry[]));
           } catch (error) {
             console.warn(
               "[sunday] failed to refresh demo entries",
               error instanceof Error ? error.message : error,
             );
+            setSeedEntries(normalizeDemoSeedEntries([]));
           }
         } else {
           setIsDemo(false);
@@ -643,7 +707,9 @@ export default function App() {
       await saveAuthState(token, demo);
       setIsDemo(demo);
       if (demo && demoEntries?.length) {
-        setSeedEntries(demoEntries as AlertEntry[]);
+        setSeedEntries(normalizeDemoSeedEntries(demoEntries as AlertEntry[]));
+      } else if (demo) {
+        setSeedEntries(normalizeDemoSeedEntries([]));
       }
       setAuthed(true);
     },

@@ -31,11 +31,13 @@ const DELETE = "#eb4034";
 const DETAIL_TRACK = "#2b2b2b";
 const DETAIL_PANEL = "#1b1b1b";
 const DELETE_EXIT_OFFSET = Dimensions.get("window").width + 80;
+const DEMO_VOICE_ENTRY_ID = "demo-alert-voice-calendar";
 
 type AlertsScreenProps = {
   entries: AlertEntry[];
   isDemo?: boolean;
   onDeleteEntry?: (entryId: string) => void;
+  onNavigateToToday?: () => void;
 };
 
 type AlertRowProps = {
@@ -46,7 +48,9 @@ type AlertRowProps = {
 
 type EntryDetailModalProps = {
   entry: AlertEntry;
+  isDemo?: boolean;
   onClose: () => void;
+  onNavigateToToday?: () => void;
 };
 
 function TrashIcon({ size = 20, color = "#ffffff" }: { size?: number; color?: string }) {
@@ -298,20 +302,20 @@ function DemoWalkthroughPanel() {
   return (
     <View style={styles.demoPanel}>
       <Text style={styles.demoPanelEyebrow}>Demo walkthrough</Text>
-      <Text style={styles.demoPanelTitle}>Open the first entry to see the full voice-note flow</Text>
+      <Text style={styles.demoPanelTitle}>Follow this flow to see Sunday work end to end</Text>
       <Text style={styles.demoPanelBody}>
         In a real connected setup, Sunday would transcribe the recording, extract actions, write the event to Google Calendar, and optionally send the follow-up message.
       </Text>
       <View style={styles.demoPanelSteps}>
-        <Text style={styles.demoPanelStep}>1. Tap “Voice note: booked product review for 2 PM.”</Text>
-        <Text style={styles.demoPanelStep}>2. Read the spoken transcript and review the extracted actions.</Text>
-        <Text style={styles.demoPanelStep}>3. Notice the “Done” badges showing what would have been executed automatically.</Text>
+        <Text style={styles.demoPanelStep}>1. Tap the first card below: “Voice note: booked product review for 2 PM.”</Text>
+        <Text style={styles.demoPanelStep}>2. Inside it, read the transcript and the actions Sunday extracted.</Text>
+        <Text style={styles.demoPanelStep}>3. Use the next-step button there to jump to Today and inspect the event Sunday created.</Text>
       </View>
     </View>
   );
 }
 
-function EntryDetailModal({ entry, onClose }: EntryDetailModalProps) {
+function EntryDetailModal({ entry, isDemo = false, onClose, onNavigateToToday }: EntryDetailModalProps) {
   const insets = useSafeAreaInsets();
   const progressAnimated = React.useRef(new Animated.Value(0)).current;
   const scrubProgressRef = React.useRef(0);
@@ -333,6 +337,7 @@ function EntryDetailModal({ entry, onClose }: EntryDetailModalProps) {
   const showBottomFade =
     transcriptOverflow &&
     transcriptScrollY < transcriptContentHeight - transcriptViewportHeight - 2;
+  const isDemoVoiceEntry = isDemo && entry.id === DEMO_VOICE_ENTRY_ID;
 
   React.useEffect(() => {
     if (isScrubbing) {
@@ -464,6 +469,26 @@ function EntryDetailModal({ entry, onClose }: EntryDetailModalProps) {
             ]}
           >
             <View style={styles.detailBottomStack}>
+            {isDemoVoiceEntry ? (
+              <View style={styles.demoDetailPanel}>
+                <Text style={styles.demoDetailEyebrow}>Step 2 of 3</Text>
+                <Text style={styles.demoDetailTitle}>This is the transcript Sunday generated</Text>
+                <Text style={styles.demoDetailBody}>
+                  The text below is what Sunday heard from the voice note. The action cards show what it would have created or sent automatically.
+                </Text>
+                {onNavigateToToday ? (
+                  <Pressable
+                    onPress={() => {
+                      onClose();
+                      onNavigateToToday();
+                    }}
+                    style={styles.demoDetailButton}
+                  >
+                    <Text style={styles.demoDetailButtonText}>Next: open the created event in Today</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
             {entry.audioUri ? (
               <View style={styles.detailControlsRow}>
                 <Pressable onPress={handlePlayPausePress} style={styles.detailPlayButton}>
@@ -581,6 +606,8 @@ function AlertRow({ item, onOpenEntry, onDeleteEntry }: AlertRowProps) {
   const deleteTranslateX = React.useRef(new Animated.Value(0)).current;
   const deleteOpacity = React.useRef(new Animated.Value(1)).current;
   const [isDeleting, setIsDeleting] = React.useState(false);
+
+  const isDemoVoiceEntry = item.id === DEMO_VOICE_ENTRY_ID;
 
   const handleSwipeableWillClose = React.useCallback(() => {
     closeBounceX.stopAnimation();
@@ -701,6 +728,11 @@ function AlertRow({ item, onOpenEntry, onDeleteEntry }: AlertRowProps) {
                 </View>
               ) : null}
               <View style={styles.cardText}>
+                {isDemoVoiceEntry ? (
+                  <View style={styles.demoEntryBadge}>
+                    <Text style={styles.demoEntryBadgeText}>Start Here</Text>
+                  </View>
+                ) : null}
                 <Text numberOfLines={1} ellipsizeMode="tail" style={styles.summary}>
                   {item.status === "pending" ? "Transcription loading..." : item.summary}
                 </Text>
@@ -719,7 +751,7 @@ function AlertRow({ item, onOpenEntry, onDeleteEntry }: AlertRowProps) {
   );
 }
 
-export function AlertsScreen({ entries, isDemo = false, onDeleteEntry }: AlertsScreenProps) {
+export function AlertsScreen({ entries, isDemo = false, onDeleteEntry, onNavigateToToday }: AlertsScreenProps) {
   const insets = useSafeAreaInsets();
   const headerTopInset = insets.top + 8;
   const [selectedEntryId, setSelectedEntryId] = React.useState<string | null>(null);
@@ -768,7 +800,9 @@ export function AlertsScreen({ entries, isDemo = false, onDeleteEntry }: AlertsS
       {selectedEntry ? (
         <EntryDetailModal
           entry={selectedEntry}
+          isDemo={isDemo}
           onClose={() => setSelectedEntryId(null)}
+          onNavigateToToday={onNavigateToToday}
         />
       ) : null}
     </SafeAreaView>
@@ -835,6 +869,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontFamily: FONTS.regular,
+  },
+  demoEntryBadge: {
+    alignSelf: "flex-start",
+    marginBottom: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(138, 180, 255, 0.18)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  demoEntryBadgeText: {
+    color: "#8ab4ff",
+    fontSize: 11,
+    fontFamily: FONTS.semibold,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
   },
   emptyState: {
     flex: 1,
@@ -974,6 +1023,48 @@ const styles = StyleSheet.create({
   },
   detailBottomStack: {
     gap: 6,
+  },
+  demoDetailPanel: {
+    borderRadius: 18,
+    backgroundColor: "#202632",
+    borderWidth: 1,
+    borderColor: "#334155",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 8,
+    marginBottom: 6,
+  },
+  demoDetailEyebrow: {
+    color: "#8ab4ff",
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  demoDetailTitle: {
+    color: "#f5f5f5",
+    fontSize: 18,
+    lineHeight: 23,
+    fontFamily: FONTS.semibold,
+  },
+  demoDetailBody: {
+    color: "#d0d0d0",
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: FONTS.regular,
+  },
+  demoDetailButton: {
+    marginTop: 4,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  demoDetailButtonText: {
+    color: "#121212",
+    fontSize: 13,
+    fontFamily: FONTS.semibold,
   },
   detailControlsRow: {
     flexDirection: "row",

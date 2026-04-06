@@ -23,6 +23,7 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
+import { PageCoachOverlay, useDelayedCoach } from "../components/PageCoachOverlay";
 import {
   LocationPickerModal,
   SelectedLocation,
@@ -1052,7 +1053,15 @@ function formatTimeForBackend(date: Date) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function SettingsScreen() {
+export function SettingsScreen({
+  isActive = true,
+  onNavigateToRecord,
+  onNavigateToEntries,
+}: {
+  isActive?: boolean;
+  onNavigateToRecord?: () => void;
+  onNavigateToEntries?: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const scrollViewRef = React.useRef<ScrollView>(null);
@@ -1104,6 +1113,13 @@ export function SettingsScreen() {
   const timezoneBackdropOpacity = React.useRef(new Animated.Value(0)).current;
   const timezoneSheetTranslateY = React.useRef(new Animated.Value(28)).current;
   const calendarEditorProgress = React.useRef(new Animated.Value(0)).current;
+  const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(
+    isActive &&
+      !isLoading &&
+      !isOptionPickerMounted &&
+      !isTimezonePickerMounted &&
+      activeLocationGroupId === null,
+  );
 
   React.useEffect(() => {
     if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -2751,6 +2767,28 @@ export function SettingsScreen() {
           </View>
         </Modal>
       ) : null}
+      <PageCoachOverlay
+        visible={isCoachVisible}
+        eyebrow="Settings hint"
+        title="You probably do not need to change anything here right now"
+        body="For the hosted walkthrough, Sunday is already configured. Use this page when you want to connect your own accounts or change advanced behavior."
+        steps={[
+          "1. Leave Hosted selected if you are following the built-in demo flow.",
+          "2. Go to Record to make a note, or Entries to follow the sample walkthrough.",
+          "3. Come back here later if you want to customize providers, calendar, or messaging.",
+        ]}
+        primaryAction={
+          onNavigateToRecord
+            ? { label: "Go to Record", onPress: onNavigateToRecord }
+            : undefined
+        }
+        secondaryAction={
+          onNavigateToEntries
+            ? { label: "Open Entries", onPress: onNavigateToEntries }
+            : undefined
+        }
+        onDismiss={dismissCoach}
+      />
     </SafeAreaView>
   );
 }

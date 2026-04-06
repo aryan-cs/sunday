@@ -20,6 +20,7 @@ import {
 import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
+import { PageCoachOverlay, useDelayedCoach } from "../components/PageCoachOverlay";
 import { FONTS } from "../constants/fonts";
 import {
   CalendarPreferences,
@@ -506,7 +507,17 @@ function DemoWalkthroughCard() {
   );
 }
 
-export function TodayScreen({ isDemo = false }: { isDemo?: boolean }) {
+export function TodayScreen({
+  isDemo = false,
+  isActive = true,
+  onNavigateToEntries,
+  onNavigateToSettings,
+}: {
+  isDemo?: boolean;
+  isActive?: boolean;
+  onNavigateToEntries?: () => void;
+  onNavigateToSettings?: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const headerTopInset = insets.top + 8;
@@ -524,6 +535,9 @@ export function TodayScreen({ isDemo = false }: { isDemo?: boolean }) {
     React.useState<GeocodeSearchResponse | null>(null);
   const [isResolvingSelectedEventMapPreview, setIsResolvingSelectedEventMapPreview] =
     React.useState(false);
+  const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(
+    isActive && !selectedEvent && !isCalendarSettingsVisible && !isLoading,
+  );
   const eventLocationPreviewCacheRef = React.useRef<Record<string, GeocodeSearchResponse | null>>(
     {},
   );
@@ -639,6 +653,10 @@ export function TodayScreen({ isDemo = false }: { isDemo?: boolean }) {
     const hidden = new Set(preferences.hiddenCalendarIds);
     return events.filter((event) => !hidden.has(event.calendar_id));
   }, [events, preferences.hiddenCalendarIds]);
+  const featuredEvent = React.useMemo(
+    () => filteredEvents.find((event) => event.id === DEMO_VOICE_EVENT_ID) ?? filteredEvents[0] ?? null,
+    [filteredEvents],
+  );
   const selectedEventCalendarColor = React.useMemo(() => {
     if (!selectedEvent) {
       return ACCENT;
@@ -1259,6 +1277,50 @@ export function TodayScreen({ isDemo = false }: { isDemo?: boolean }) {
           </View>
         </Modal>
       ) : null}
+      <PageCoachOverlay
+        visible={isCoachVisible}
+        eyebrow={isDemo ? "Step 3" : "Today hint"}
+        title={
+          featuredEvent
+            ? isDemo
+              ? "Open the voice-note event to finish the walkthrough"
+              : "Tap an event to see the full sheet"
+            : "Your calendar needs one more step"
+        }
+        body={
+          featuredEvent
+            ? isDemo
+              ? "This page shows the calendar event Sunday created from the sample voice note, including travel timing and notes."
+              : "Today is where Sunday gathers your schedule, travel timing, locations, and event details."
+            : "Connect or adjust your calendar in Settings, then come back here to see events."
+        }
+        steps={
+          featuredEvent
+            ? [
+                `1. ${isDemo ? "Find the event tagged Created from voice note." : "Tap the event card you want to inspect."}`,
+                "2. Read the event sheet for timing, location, notes, and travel details.",
+                `3. ${isDemo ? "You’ve seen the full Sunday flow end to end." : "Use Entries to trace back to the recording that created it."}`,
+              ]
+            : [
+                "1. Open Settings to connect or adjust your calendar.",
+                "2. Return to Today after sync completes.",
+                "3. Tap an event card to inspect the full event sheet.",
+              ]
+        }
+        primaryAction={
+          featuredEvent
+            ? { label: isDemo ? "Open sample event" : "Open first event", onPress: () => setSelectedEvent(featuredEvent) }
+            : onNavigateToSettings
+              ? { label: "Open Settings", onPress: onNavigateToSettings }
+              : undefined
+        }
+        secondaryAction={
+          featuredEvent && onNavigateToEntries
+            ? { label: "Open Entries", onPress: onNavigateToEntries }
+            : undefined
+        }
+        onDismiss={dismissCoach}
+      />
     </SafeAreaView>
   );
 }

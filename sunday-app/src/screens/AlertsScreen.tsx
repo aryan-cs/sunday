@@ -21,6 +21,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import Swipeable from "react-native-gesture-handler/Swipeable";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
+import { PageCoachOverlay, useDelayedCoach } from "../components/PageCoachOverlay";
 import { FONTS } from "../constants/fonts";
 import { ActionItem, AlertEntry } from "../lib/alertEntries";
 
@@ -36,8 +37,10 @@ const DEMO_VOICE_ENTRY_ID = "demo-alert-voice-calendar";
 type AlertsScreenProps = {
   entries: AlertEntry[];
   isDemo?: boolean;
+  isActive?: boolean;
   onDeleteEntry?: (entryId: string) => void;
   onNavigateToToday?: () => void;
+  onNavigateToRecord?: () => void;
 };
 
 type AlertRowProps = {
@@ -751,14 +754,28 @@ function AlertRow({ item, onOpenEntry, onDeleteEntry }: AlertRowProps) {
   );
 }
 
-export function AlertsScreen({ entries, isDemo = false, onDeleteEntry, onNavigateToToday }: AlertsScreenProps) {
+export function AlertsScreen({
+  entries,
+  isDemo = false,
+  isActive = true,
+  onDeleteEntry,
+  onNavigateToToday,
+  onNavigateToRecord,
+}: AlertsScreenProps) {
   const insets = useSafeAreaInsets();
   const headerTopInset = insets.top + 8;
   const [selectedEntryId, setSelectedEntryId] = React.useState<string | null>(null);
+  const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(
+    isActive && !selectedEntryId,
+  );
 
   const selectedEntry = React.useMemo(
     () => entries.find((entry) => entry.id === selectedEntryId) ?? null,
     [entries, selectedEntryId],
+  );
+  const firstEntryId = React.useMemo(
+    () => entries.find((entry) => entry.id === DEMO_VOICE_ENTRY_ID)?.id ?? entries[0]?.id ?? null,
+    [entries],
   );
 
   React.useEffect(() => {
@@ -805,6 +822,50 @@ export function AlertsScreen({ entries, isDemo = false, onDeleteEntry, onNavigat
           onNavigateToToday={onNavigateToToday}
         />
       ) : null}
+      <PageCoachOverlay
+        visible={isCoachVisible}
+        eyebrow={isDemo ? "Step 1" : "Entries hint"}
+        title={
+          firstEntryId
+            ? isDemo
+              ? "Open the first card to start the walkthrough"
+              : "Tap an entry to see the transcript and actions"
+            : "There are no entries yet"
+        }
+        body={
+          firstEntryId
+            ? isDemo
+              ? "The first card is the guided sample voice note. Opening it shows what Sunday heard and what it would have done automatically."
+              : "Entries are where Sunday stores the transcript, summary, and extracted actions from each recording."
+            : "Go back to Record, make a note, then come here to review the result."
+        }
+        steps={
+          firstEntryId
+            ? [
+                `1. ${isDemo ? "Tap the card marked Start Here." : "Tap the newest entry card."}`,
+                "2. Read the transcript and action cards inside the detail view.",
+                `3. ${isDemo ? "Use the next-step button there to jump into Today." : "Come back here anytime to replay or review saved notes."}`,
+              ]
+            : [
+                "1. Go to Record.",
+                "2. Make a short note.",
+                "3. Return here to review the transcript and actions.",
+              ]
+        }
+        primaryAction={
+          firstEntryId
+            ? { label: isDemo ? "Open Start Here card" : "Open first entry", onPress: () => setSelectedEntryId(firstEntryId) }
+            : onNavigateToRecord
+              ? { label: "Go to Record", onPress: onNavigateToRecord }
+              : undefined
+        }
+        secondaryAction={
+          firstEntryId && onNavigateToRecord
+            ? { label: "Go to Record", onPress: onNavigateToRecord }
+            : undefined
+        }
+        onDismiss={dismissCoach}
+      />
     </SafeAreaView>
   );
 }

@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { PageCoachOverlay, useDelayedCoach } from "../components/PageCoachOverlay";
 import { demoLogin, logIn, signUp } from "../lib/auth";
 
 const BG = "#121212";
@@ -32,6 +33,7 @@ export function AuthScreen({ onAuth }: Props) {
   const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
+  const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(!loading);
 
   const handleSubmit = React.useCallback(async () => {
     setError("");
@@ -159,6 +161,20 @@ export function AuthScreen({ onAuth }: Props) {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      <PageCoachOverlay
+        visible={isCoachVisible}
+        eyebrow="Start here"
+        title="Choose how you want to enter Sunday"
+        body="If you want the quickest walkthrough, use the Try Demo button. If you already have an account, stay on Log In and continue there."
+        steps={[
+          "1. Tap “Try Demo” to load the guided sample flow.",
+          "2. Or stay on “Log In” and enter your own account details.",
+          "3. After demo starts, Sunday will guide you through Entries and Today.",
+        ]}
+        primaryAction={{ label: "Start demo walkthrough", onPress: () => void handleDemo() }}
+        secondaryAction={{ label: "Use Log In", onPress: () => setTab("login") }}
+        onDismiss={dismissCoach}
+      />
     </SafeAreaView>
   );
 }

@@ -559,13 +559,25 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
         onLayout={applyInitialPage}
         contentOffset={{ x: INITIAL_INDEX * SCREEN_WIDTH, y: 0 }}
       >
-        <View style={styles.page}><SettingsScreen /></View>
         <View style={styles.page}>
-          <TodayScreen isDemo={isDemo} />
+          <SettingsScreen
+            isActive={activeIndex === 0}
+            onNavigateToRecord={() => handleTabPress(RECORD_TAB_INDEX)}
+            onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
+          />
+        </View>
+        <View style={styles.page}>
+          <TodayScreen
+            isDemo={isDemo}
+            isActive={activeIndex === 1}
+            onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
+            onNavigateToSettings={() => handleTabPress(0)}
+          />
         </View>
         <View style={styles.page}>
           <HomeScreen
             isDemo={isDemo}
+            isActive={activeIndex === RECORD_TAB_INDEX}
             hasEntries={alertEntries.length > 0}
             onBackgroundPress={handleRecordBackgroundPress}
             onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
@@ -579,8 +591,10 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
           <AlertsScreen
             entries={alertEntries}
             isDemo={isDemo}
+            isActive={activeIndex === ALERTS_TAB_INDEX}
             onDeleteEntry={handleDeleteAlert}
             onNavigateToToday={() => handleTabPress(1)}
+            onNavigateToRecord={() => handleTabPress(RECORD_TAB_INDEX)}
           />
         </View>
       </ScrollView>

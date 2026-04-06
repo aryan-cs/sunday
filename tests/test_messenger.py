@@ -82,6 +82,7 @@ async def test_send_summary_sends_email_link_as_follow_up_message(monkeypatch):
 
     monkeypatch.setattr("backend.messenger.Config.telegram_token", "token")
     monkeypatch.setattr("backend.messenger.Config.telegram_chat_id", "chat")
+    monkeypatch.setattr("backend.messenger.Config.message_channel", "Telegram")
     monkeypatch.setattr("backend.messenger.Config.imessage_enabled", False)
     monkeypatch.setattr("backend.messenger.Config.text_email_links", True)
     monkeypatch.setattr("backend.messenger.TelegramMessenger.send", fake_send)
@@ -117,6 +118,7 @@ async def test_send_summary_skips_email_link_when_text_email_links_disabled(monk
 
     monkeypatch.setattr("backend.messenger.Config.telegram_token", "token")
     monkeypatch.setattr("backend.messenger.Config.telegram_chat_id", "chat")
+    monkeypatch.setattr("backend.messenger.Config.message_channel", "Telegram")
     monkeypatch.setattr("backend.messenger.Config.imessage_enabled", False)
     monkeypatch.setattr("backend.messenger.Config.text_email_links", False)
     monkeypatch.setattr("backend.messenger.TelegramMessenger.send", fake_send)
@@ -142,6 +144,7 @@ async def test_send_summary_skips_email_link_when_text_email_links_disabled(monk
 
 @pytest.mark.anyio
 async def test_send_summary_requires_configured_channel(monkeypatch):
+    monkeypatch.setattr("backend.messenger.Config.message_channel", "Telegram")
     monkeypatch.setattr("backend.messenger.Config.telegram_token", "")
     monkeypatch.setattr("backend.messenger.Config.telegram_chat_id", "")
     monkeypatch.setattr("backend.messenger.Config.imessage_enabled", False)
@@ -152,9 +155,33 @@ async def test_send_summary_requires_configured_channel(monkeypatch):
 
 @pytest.mark.anyio
 async def test_send_text_message_requires_configured_channel(monkeypatch):
+    monkeypatch.setattr("backend.messenger.Config.message_channel", "Telegram")
     monkeypatch.setattr("backend.messenger.Config.telegram_token", "")
     monkeypatch.setattr("backend.messenger.Config.telegram_chat_id", "")
     monkeypatch.setattr("backend.messenger.Config.imessage_enabled", False)
 
     with pytest.raises(MessagingDeliveryError):
         await send_text_message("hello")
+
+
+@pytest.mark.anyio
+async def test_send_text_message_uses_selected_whatsapp_channel(monkeypatch):
+    sent_messages: list[str] = []
+
+    async def fake_whatsapp_send(self, message: str) -> bool:
+        del self
+        sent_messages.append(message)
+        return True
+
+    async def fail_telegram(self, message: str) -> bool:
+        del self, message
+        raise AssertionError("Telegram should not be used when WhatsApp is selected")
+
+    monkeypatch.setattr("backend.messenger.Config.message_channel", "WhatsApp")
+    monkeypatch.setattr("backend.messenger.Config.text_email_links", True)
+    monkeypatch.setattr("backend.messenger.WhatsAppMessenger.send", fake_whatsapp_send)
+    monkeypatch.setattr("backend.messenger.TelegramMessenger.send", fail_telegram)
+
+    await send_text_message("hello there", "https://example.com/follow-up")
+
+    assert sent_messages == ["hello there", "https://example.com/follow-up"]

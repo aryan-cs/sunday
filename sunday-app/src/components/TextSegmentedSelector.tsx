@@ -2,7 +2,6 @@ import React from "react";
 import {
   Animated,
   LayoutChangeEvent,
-  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -21,14 +20,12 @@ type TextSegmentedSelectorProps = {
   options: readonly string[];
   value: string;
   onChange: (nextValue: string) => void;
-  onInteractionChange?: (isInteracting: boolean) => void;
 };
 
 export function TextSegmentedSelector({
   options,
   value,
   onChange,
-  onInteractionChange,
 }: TextSegmentedSelectorProps) {
   const selectedIndex = Math.max(
     0,
@@ -36,14 +33,8 @@ export function TextSegmentedSelector({
   );
   const animatedIndex = React.useRef(new Animated.Value(selectedIndex)).current;
   const [containerWidth, setContainerWidth] = React.useState(0);
-  const isDraggingRef = React.useRef(false);
-  const dragIndexRef = React.useRef(selectedIndex);
-  const isTouchActiveRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (isDraggingRef.current) {
-      return;
-    }
     Animated.spring(animatedIndex, {
       toValue: selectedIndex,
       speed: 20,
@@ -60,19 +51,6 @@ export function TextSegmentedSelector({
   const itemWidth = innerWidth / options.length || 0;
   const indicatorWidth = Math.max(0, itemWidth - INDICATOR_GAP * 2);
   const indicatorInset = Math.max(0, (itemWidth - indicatorWidth) / 2);
-  const clampIndex = React.useCallback(
-    (nextIndex: number) => Math.max(0, Math.min(options.length - 1, nextIndex)),
-    [options.length],
-  );
-  const getDragIndex = React.useCallback(
-    (locationX: number) => {
-      if (itemWidth <= 0) {
-        return selectedIndex;
-      }
-      return clampIndex((locationX - PADDING - itemWidth / 2) / itemWidth);
-    },
-    [clampIndex, itemWidth, selectedIndex],
-  );
   const indicatorTranslateX = React.useMemo(
     () =>
       animatedIndex.interpolate({
@@ -86,78 +64,13 @@ export function TextSegmentedSelector({
     () => Animated.multiply(indicatorTranslateX, -1),
     [indicatorTranslateX],
   );
-  const finishDrag = React.useCallback(
-    (nextIndex: number) => {
-      isDraggingRef.current = false;
-      dragIndexRef.current = nextIndex;
-      const roundedIndex = clampIndex(Math.round(nextIndex));
-      Animated.spring(animatedIndex, {
-        toValue: roundedIndex,
-        speed: 20,
-        bounciness: 10,
-        useNativeDriver: false,
-      }).start();
-      if (roundedIndex !== selectedIndex) {
-        onChange(options[roundedIndex]);
-      }
-    },
-    [animatedIndex, clampIndex, onChange, options, selectedIndex],
-  );
-  const setInteractionActive = React.useCallback(
-    (isInteracting: boolean) => {
-      if (isTouchActiveRef.current === isInteracting) {
-        return;
-      }
-      isTouchActiveRef.current = isInteracting;
-      onInteractionChange?.(isInteracting);
-    },
-    [onInteractionChange],
-  );
-  const panResponder = React.useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onStartShouldSetPanResponderCapture: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponderCapture: () => true,
-        onPanResponderGrant: (event) => {
-          setInteractionActive(true);
-          isDraggingRef.current = true;
-          const nextIndex = getDragIndex(event.nativeEvent.locationX);
-          dragIndexRef.current = nextIndex;
-          animatedIndex.stopAnimation();
-          animatedIndex.setValue(nextIndex);
-        },
-        onPanResponderMove: (event) => {
-          const nextIndex = getDragIndex(event.nativeEvent.locationX);
-          dragIndexRef.current = nextIndex;
-          animatedIndex.setValue(nextIndex);
-        },
-        onPanResponderRelease: () => {
-          setInteractionActive(false);
-          finishDrag(dragIndexRef.current);
-        },
-        onPanResponderTerminate: () => {
-          setInteractionActive(false);
-          finishDrag(dragIndexRef.current);
-        },
-      }),
-    [animatedIndex, finishDrag, getDragIndex, setInteractionActive],
-  );
 
   return (
-    <View
-      style={styles.container}
-      onLayout={handleLayout}
-      {...panResponder.panHandlers}
-    >
+    <View style={styles.container} onLayout={handleLayout}>
       {options.map((option) => (
         <Pressable
           key={option}
-          onPress={() => {
-            setInteractionActive(false);
-            onChange(option);
-          }}
+          onPress={() => onChange(option)}
           style={styles.optionButton}
         >
           <Text

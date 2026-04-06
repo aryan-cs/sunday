@@ -7,6 +7,7 @@ that is the single source of truth for all settings.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -47,6 +48,24 @@ def _get_optional_int(name: str) -> int | None:
 def _get_with_legacy(primary: str, legacy: str, default: str = "") -> str:
     """Read a new env var name, falling back to an older legacy name."""
     return os.getenv(primary, os.getenv(legacy, default))
+
+
+def _default_message_channel() -> str:
+    """Pick a sensible default channel for older configs that predate MESSAGE_CHANNEL."""
+    configured = os.getenv("MESSAGE_CHANNEL", "").strip()
+    if configured:
+        return configured
+    if (
+        os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+        and os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+        and os.getenv("WHATSAPP_RECIPIENT", "").strip()
+    ):
+        return "WhatsApp"
+    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv("TELEGRAM_CHAT_ID", "").strip():
+        return "Telegram"
+    if os.getenv("IMESSAGE_ENABLED", "false").lower() == "true":
+        return "iMessage"
+    return "Telegram"
 
 
 def _is_valid_hhmm(value: str) -> bool:
@@ -126,8 +145,13 @@ class Config:
     # ── Messaging ──
     telegram_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    message_channel: str = _default_message_channel().strip() or "Telegram"
     imessage_enabled: bool = os.getenv("IMESSAGE_ENABLED", "false").lower() == "true"
     imessage_recipient: str = os.getenv("IMESSAGE_RECIPIENT", "")
+    whatsapp_access_token: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+    whatsapp_phone_number_id: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+    whatsapp_recipient: str = os.getenv("WHATSAPP_RECIPIENT", "").strip()
+    whatsapp_graph_api_version: str = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v23.0").strip() or "v23.0"
     text_email_links: bool = os.getenv("TEXT_EMAIL_LINKS", "false").lower() == "true"
 
     # ── Preferences ──
@@ -195,6 +219,9 @@ class Config:
     openclaw_enabled: bool = os.getenv("OPENCLAW_ENABLED", "false").lower() == "true"
     # AGENT_MODE: off | openclaw | builtin
     agent_mode: str = os.getenv("AGENT_MODE", "off")
+    connection_agent: str = os.getenv("CONNECTION_AGENT", "Ollama").strip() or "Ollama"
+    backend_target: str = os.getenv("BACKEND_TARGET", "Self-hosted").strip() or "Self-hosted"
+    vercel_base_url: str = os.getenv("VERCEL_BASE_URL", "").strip()
     llm_requests_per_minute: int | None = _get_optional_int("LLM_REQUESTS_PER_MINUTE")
     llm_retry_attempts: int = int(os.getenv("LLM_RETRY_ATTEMPTS", "4"))
     llm_retry_base_seconds: float = float(os.getenv("LLM_RETRY_BASE_SECONDS", "5"))
@@ -261,19 +288,37 @@ class Config:
             errors.append("LLM_RETRY_BASE_SECONDS must be greater than 0.")
         if cls.llm_requests_per_minute is not None and cls.llm_requests_per_minute < 1:
             errors.append("LLM_REQUESTS_PER_MINUTE must be at least 1 when set.")
-
-        if cls.telegram_token and not cls.telegram_chat_id:
-            errors.append("TELEGRAM_CHAT_ID is required when TELEGRAM_BOT_TOKEN is set.")
-        if cls.telegram_chat_id and not cls.telegram_token:
-            errors.append("TELEGRAM_BOT_TOKEN is required when TELEGRAM_CHAT_ID is set.")
-        if cls.imessage_enabled and not cls.imessage_recipient:
-            errors.append("IMESSAGE_RECIPIENT is required when IMESSAGE_ENABLED=true.")
-
-        if not cls.telegram_token and not cls.imessage_enabled:
+        if cls.backend_target not in {"Self-hosted", "Vercel"}:
+            errors.append("BACKEND_TARGET must be either Self-hosted or Vercel.")
+        if cls.backend_target == "Vercel" and not cls.vercel_base_url:
             warnings.append(
-                "No messaging output configured. "
-                "Summaries will fail until Telegram or iMessage is configured."
+                "VERCEL_BASE_URL is empty while BACKEND_TARGET is set to Vercel."
             )
+
+        valid_message_channels = {"iMessage", "Telegram", "WhatsApp"}
+        if cls.message_channel not in valid_message_channels:
+            errors.append("MESSAGE_CHANNEL must be one of: iMessage, Telegram, WhatsApp.")
+        elif cls.message_channel == "Telegram":
+            if not cls.telegram_token:
+                errors.append("TELEGRAM_BOT_TOKEN is required when MESSAGE_CHANNEL=Telegram.")
+            if not cls.telegram_chat_id:
+                errors.append("TELEGRAM_CHAT_ID is required when MESSAGE_CHANNEL=Telegram.")
+        elif cls.message_channel == "iMessage":
+            if not cls.imessage_recipient:
+                errors.append("IMESSAGE_RECIPIENT is required when MESSAGE_CHANNEL=iMessage.")
+            if os.getenv("VERCEL") or cls.backend_target == "Vercel":
+                errors.append(
+                    "iMessage delivery does not work on Vercel. Choose Telegram or WhatsApp for deployed backends."
+                )
+            elif sys.platform != "darwin":
+                warnings.append("iMessage delivery requires macOS and osascript.")
+        elif cls.message_channel == "WhatsApp":
+            if not cls.whatsapp_access_token:
+                errors.append("WHATSAPP_ACCESS_TOKEN is required when MESSAGE_CHANNEL=WhatsApp.")
+            if not cls.whatsapp_phone_number_id:
+                errors.append("WHATSAPP_PHONE_NUMBER_ID is required when MESSAGE_CHANNEL=WhatsApp.")
+            if not cls.whatsapp_recipient:
+                errors.append("WHATSAPP_RECIPIENT is required when MESSAGE_CHANNEL=WhatsApp.")
 
         if not cls.google_maps_key:
             warnings.append(

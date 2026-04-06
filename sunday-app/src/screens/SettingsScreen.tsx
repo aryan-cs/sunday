@@ -6,6 +6,7 @@ import { Picker } from "@react-native-picker/picker";
 import {
   ActivityIndicator,
   Animated,
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -15,6 +16,7 @@ import {
   Switch,
   Text,
   TextInput,
+  UIManager,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -26,13 +28,8 @@ import {
 } from "../components/LocationPickerModal";
 import { TextSegmentedSelector } from "../components/TextSegmentedSelector";
 import { TravelTypeSelector } from "../components/TravelTypeSelector";
-import {
-  AdvancedSection,
-  AdvancedSubSection,
-} from "./settings/AdvancedSection";
 import { FONTS } from "../constants/fonts";
 import {
-  getConnectionPreferences,
   saveConnectionPreferences,
 } from "../lib/connectionPreferences";
 import { getCurrentPositionAsync } from "expo-location";
@@ -124,6 +121,7 @@ const CONNECTED_AGENT_OPTIONS = [
   "Ollama",
   "OpenClaw",
 ] as const;
+const MESSAGE_CHANNEL_OPTIONS = ["iMessage", "Telegram", "WhatsApp"] as const;
 const BACKEND_OPTIONS = ["Self-hosted", "Vercel"] as const;
 const RECOMMENDED_TRANSCRIPTION_MODEL = "ggml-small.en-q5_1";
 const RECOMMENDED_SUMMARIZATION_MODEL = "qwen2.5-0.5b-instruct";
@@ -140,9 +138,22 @@ const LLM_PROVIDER_OPTIONS = [
 ] as const;
 const TITLE_DEVICE_OPTIONS = ["auto", "cpu", "mps", "cuda"] as const;
 const LOG_LEVEL_OPTIONS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] as const;
+const STANDARD_SECTION_ORDER = [
+  "Calendar",
+  "Locations",
+  "Schedule",
+  "Messaging",
+  "Provider",
+  "Google",
+  "Runtime",
+  "Danger Zone",
+] as const;
+const TOP_SECTION_TITLES = new Set(["Calendar", "Locations", "Schedule"]);
+const COLLAPSIBLE_SECTION_TITLES = new Set(["Provider", "Google", "Runtime", "Danger Zone"]);
 type FieldKind = "text" | "number" | "decimal" | "boolean" | "choice" | "select" | "secret";
 type OptionSheetKind =
   | "agent"
+  | "MESSAGE_CHANNEL"
   | "AGENT_MODE"
   | "transcription-model"
   | "summarization-model"
@@ -157,20 +168,11 @@ const AGENT_MODE_LABELS: Record<string, string> = {
   both: "Both",
   openclaw: "OpenClaw",
 };
-
-function getProviderApiKeyConfig(provider: string): { key: string; placeholder: string } | null {
-  switch (provider) {
-    case "gemini": return { key: "GEMINI_API_KEY", placeholder: "AIza..." };
-    case "openrouter": return { key: "OPENROUTER_API_KEY", placeholder: "sk-or-..." };
-    case "groq": return { key: "GROQ_API_KEY", placeholder: "gsk_..." };
-    case "cerebras": return { key: "CEREBRAS_API_KEY", placeholder: "csk-..." };
-    case "together": return { key: "TOGETHER_API_KEY", placeholder: "..." };
-    case "mistral": return { key: "MISTRAL_API_KEY", placeholder: "..." };
-    case "huggingface": return { key: "HUGGINGFACE_API_KEY", placeholder: "hf_..." };
-    case "custom": return { key: "CUSTOM_LLM_API_KEY", placeholder: "..." };
-    default: return null; // ollama needs no key
-  }
-}
+const MESSAGE_CHANNEL_LABELS: Record<string, string> = {
+  iMessage: "iOS Messages",
+  Telegram: "Telegram",
+  WhatsApp: "WhatsApp",
+};
 
 type SettingField = {
   key: string;
@@ -247,13 +249,47 @@ function WorkLocationIcon({ size = 22, color = "#e3e3e3" }: { size?: number; col
   );
 }
 
-const PRIMARY_SECTIONS: SettingSection[] = [
+function SectionChevronRightIcon({
+  size = 22,
+  color = "#e3e3e3",
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 -960 960 960" fill="none">
+      <Path
+        d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+function SectionChevronDownIcon({
+  size = 22,
+  color = "#e3e3e3",
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 -960 960 960" fill="none">
+      <Path
+        d="M480-344 240-584l56-56 184 184 184-184 56 56-240 240Z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+const SETTINGS_SECTIONS: SettingSection[] = [
   {
     title: "Calendar",
     fields: [
       {
         key: "TARGET_CALENDAR_ID",
-        label: "Calendar",
+        label: "Google Calendar ID",
         placeholder: "primary",
         kind: "text",
       },
@@ -288,7 +324,7 @@ const PRIMARY_SECTIONS: SettingSection[] = [
     ],
   },
   {
-    title: "Schedule & Travel",
+    title: "Schedule",
     fields: [
       {
         key: "WORK_DAYS",
@@ -297,41 +333,52 @@ const PRIMARY_SECTIONS: SettingSection[] = [
       },
       {
         key: "WORKDAY_START_TIME",
-        label: "Day starts",
+        label: "Workday start",
         placeholder: "09:00",
         kind: "text",
       },
       {
         key: "WORKDAY_END_TIME",
-        label: "Day ends",
+        label: "Workday end",
         placeholder: "17:00",
         kind: "text",
       },
       {
         key: "TRAVEL_TYPE",
-        label: "How you get around",
+        label: "Travel type",
         kind: "choice",
         options: ["driving", "walking", "bicycling", "transit"],
       },
       {
         key: "PREP_TIME_MINUTES",
-        label: "Buffer before in-person",
+        label: "Prep minutes",
         kind: "number",
       },
       {
         key: "ONLINE_PREP_MINUTES",
-        label: "Buffer before online",
+        label: "Online prep minutes",
+        kind: "number",
+      },
+      {
+        key: "POLL_INTERVAL_SECONDS",
+        label: "Poll interval seconds",
+        kind: "number",
+      },
+      {
+        key: "MAX_EMAILS_PER_CYCLE",
+        label: "Max emails per cycle",
         kind: "number",
       },
     ],
   },
   {
-    title: "Notifications",
+    title: "Messaging",
     fields: [
       {
-        key: "IMESSAGE_ENABLED",
-        label: "iMessage",
-        kind: "boolean",
+        key: "MESSAGE_CHANNEL",
+        label: "Channel",
+        kind: "select",
+        options: [...MESSAGE_CHANNEL_OPTIONS],
       },
       {
         key: "IMESSAGE_RECIPIENT",
@@ -351,95 +398,277 @@ const PRIMARY_SECTIONS: SettingSection[] = [
         kind: "secret",
         placeholder: "your chat ID",
       },
+      {
+        key: "WHATSAPP_ACCESS_TOKEN",
+        label: "WhatsApp access token",
+        kind: "secret",
+        placeholder: "EAAG...",
+      },
+      {
+        key: "WHATSAPP_PHONE_NUMBER_ID",
+        label: "WhatsApp phone number ID",
+        kind: "text",
+        placeholder: "123456789012345",
+      },
+      {
+        key: "WHATSAPP_RECIPIENT",
+        label: "WhatsApp recipient",
+        kind: "text",
+        placeholder: "12175551234",
+      },
     ],
   },
-];
-
-const ADVANCED_SECTIONS: { title: string; fields: SettingField[] }[] = [
   {
-    title: "Email Scanning",
+    title: "Provider",
     fields: [
       {
+        key: "ACTIVE_LLM_PROVIDER",
+        label: "LLM provider",
+        kind: "select",
+        options: [...LLM_PROVIDER_OPTIONS],
+      },
+      {
+        key: "AGENT_MODE",
+        label: "Agent mode",
+        kind: "select",
+        options: [...AGENT_MODE_OPTIONS],
+      },
+      {
+        key: "OPENCLAW_ENABLED",
+        label: "OpenClaw enabled",
+        kind: "boolean",
+      },
+      {
+        key: "GEMINI_MODEL",
+        label: "Gemini model",
+        kind: "text",
+      },
+      {
+        key: "OPENROUTER_MODEL",
+        label: "OpenRouter model",
+        kind: "text",
+      },
+      {
+        key: "OPENROUTER_SITE_URL",
+        label: "OpenRouter site URL",
+        kind: "text",
+      },
+      {
+        key: "OPENROUTER_APP_NAME",
+        label: "OpenRouter app name",
+        kind: "text",
+      },
+      {
+        key: "GROQ_MODEL",
+        label: "Groq model",
+        kind: "text",
+      },
+      {
+        key: "CEREBRAS_MODEL",
+        label: "Cerebras model",
+        kind: "text",
+      },
+      {
+        key: "OLLAMA_BASE_URL",
+        label: "Ollama base URL",
+        kind: "text",
+      },
+      {
+        key: "OLLAMA_MODEL",
+        label: "Ollama model",
+        kind: "text",
+      },
+      {
+        key: "TOGETHER_MODEL",
+        label: "Together model",
+        kind: "text",
+      },
+      {
+        key: "MISTRAL_MODEL",
+        label: "Mistral model",
+        kind: "text",
+      },
+      {
+        key: "HUGGINGFACE_MODEL",
+        label: "Hugging Face model",
+        kind: "text",
+      },
+      {
+        key: "CUSTOM_LLM_BASE_URL",
+        label: "Custom base URL",
+        kind: "text",
+      },
+      {
+        key: "CUSTOM_LLM_MODEL",
+        label: "Custom model",
+        kind: "text",
+      },
+      {
+        key: "OPENCLAW_BASE_URL",
+        label: "OpenClaw base URL",
+        kind: "text",
+      },
+    ],
+  },
+  {
+    title: "Google",
+    fields: [
+      {
+        key: "GOOGLE_CREDENTIALS_FILE",
+        label: "Credentials file",
+        kind: "text",
+      },
+      {
+        key: "GOOGLE_TOKEN_FILE",
+        label: "Token file",
+        kind: "text",
+      },
+    ],
+  },
+  {
+    title: "Runtime",
+    fields: [
+      {
+        key: "AUTO_CLEANUP_HOURS",
+        label: "Auto cleanup hours",
+        kind: "number",
+      },
+      {
         key: "GMAIL_LABELS",
-        label: "Gmail labels to watch",
+        label: "Gmail labels",
         placeholder: "CATEGORY_PRIMARY",
         kind: "text",
-        description: "Comma-separate multiple labels.",
       },
-      { key: "POLL_INTERVAL_SECONDS", label: "Check interval (sec)", kind: "number" },
-      { key: "MAX_EMAILS_PER_CYCLE", label: "Emails per check", kind: "number" },
-      { key: "AUTO_CLEANUP_HOURS", label: "Auto-clean history (hours)", kind: "number" },
-    ],
-  },
-  {
-    title: "AI Tuning",
-    fields: [
-      { key: "LLM_MAX_TOKENS", label: "Max tokens", kind: "number" },
-      { key: "LLM_TEMPERATURE", label: "Temperature", kind: "decimal" },
-      { key: "LLM_REQUESTS_PER_MINUTE", label: "Requests per minute", kind: "number" },
-      { key: "LLM_RETRY_ATTEMPTS", label: "Retry attempts", kind: "number" },
-      { key: "LLM_RETRY_BASE_SECONDS", label: "Retry delay (seconds)", kind: "decimal" },
-    ],
-  },
-  {
-    title: "Transcription",
-    fields: [
-      { key: "TRANSCRIPTION_LANGUAGE", label: "Language", kind: "text" },
-      { key: "TRANSCRIPTION_THREADS", label: "Threads", kind: "number" },
+      {
+        key: "STATE_DIR",
+        label: "State directory",
+        kind: "text",
+      },
+      {
+        key: "LLM_MAX_TOKENS",
+        label: "LLM max tokens",
+        kind: "number",
+      },
+      {
+        key: "LLM_TEMPERATURE",
+        label: "LLM temperature",
+        kind: "decimal",
+      },
+      {
+        key: "LLM_REQUESTS_PER_MINUTE",
+        label: "LLM requests per minute",
+        kind: "number",
+      },
+      {
+        key: "LLM_RETRY_ATTEMPTS",
+        label: "LLM retry attempts",
+        kind: "number",
+      },
+      {
+        key: "LLM_RETRY_BASE_SECONDS",
+        label: "LLM retry base seconds",
+        kind: "decimal",
+      },
+      {
+        key: "TRANSCRIPTION_LANGUAGE",
+        label: "Transcription language",
+        kind: "text",
+      },
+      {
+        key: "TRANSCRIPTION_THREADS",
+        label: "Transcription threads",
+        kind: "number",
+      },
       {
         key: "TRANSCRIPT_TITLE_DEVICE",
         label: "Summary device",
         kind: "select",
         options: [...TITLE_DEVICE_OPTIONS],
       },
-      { key: "TRANSCRIPT_TITLE_MAX_NEW_TOKENS", label: "Max new tokens", kind: "number" },
-    ],
-  },
-  {
-    title: "System",
-    fields: [
-      { key: "GOOGLE_CREDENTIALS_FILE", label: "Credentials file path", kind: "text" },
-      { key: "GOOGLE_TOKEN_FILE", label: "Token file path", kind: "text" },
-      { key: "STATE_DIR", label: "State directory", kind: "text" },
+      {
+        key: "TRANSCRIPT_TITLE_MAX_NEW_TOKENS",
+        label: "Summary max new tokens",
+        kind: "number",
+      },
       {
         key: "LOG_LEVEL",
         label: "Log level",
         kind: "select",
         options: [...LOG_LEVEL_OPTIONS],
       },
-      { key: "GOOGLE_MAPS_API_KEY", label: "Maps API key", kind: "secret" },
     ],
   },
-];
-
-const PROVIDER_FIELDS: Record<string, SettingField[]> = {
-  gemini: [
-    { key: "GEMINI_MODEL", label: "Model", kind: "text", placeholder: "gemini-2.0-flash" },
-  ],
-  openrouter: [
-    { key: "OPENROUTER_MODEL", label: "Model", kind: "text", placeholder: "openai/gpt-4o" },
-    { key: "OPENROUTER_SITE_URL", label: "Site URL", kind: "text" },
-    { key: "OPENROUTER_APP_NAME", label: "App name", kind: "text" },
-  ],
-  groq: [{ key: "GROQ_MODEL", label: "Model", kind: "text" }],
-  cerebras: [{ key: "CEREBRAS_MODEL", label: "Model", kind: "text" }],
-  ollama: [
-    { key: "OLLAMA_BASE_URL", label: "Base URL", kind: "text", placeholder: "http://localhost:11434" },
-    { key: "OLLAMA_MODEL", label: "Model", kind: "text" },
-  ],
-  together: [{ key: "TOGETHER_MODEL", label: "Model", kind: "text" }],
-  mistral: [{ key: "MISTRAL_MODEL", label: "Model", kind: "text" }],
-  huggingface: [{ key: "HUGGINGFACE_MODEL", label: "Model", kind: "text" }],
-  custom: [
-    { key: "CUSTOM_LLM_BASE_URL", label: "Base URL", kind: "text" },
-    { key: "CUSTOM_LLM_MODEL", label: "Model", kind: "text" },
-  ],
-};
-
-const ALL_SETTINGS_FIELDS: SettingField[] = [
-  ...PRIMARY_SECTIONS.flatMap((s) => s.fields),
-  ...ADVANCED_SECTIONS.flatMap((s) => s.fields),
-  ...Object.values(PROVIDER_FIELDS).flat(),
+  {
+    title: "Danger Zone",
+    tone: "danger",
+    fields: [
+      {
+        key: "SUNDAY_API_KEY",
+        label: "Sunday API key",
+        kind: "secret",
+      },
+      {
+        key: "OPENAI_API_KEY",
+        label: "OpenAI API key",
+        kind: "secret",
+      },
+      {
+        key: "ANTHROPIC_API_KEY",
+        label: "Anthropic API key",
+        kind: "secret",
+      },
+      {
+        key: "GEMINI_API_KEY",
+        label: "Gemini API key",
+        kind: "secret",
+      },
+      {
+        key: "OPENROUTER_API_KEY",
+        label: "OpenRouter API key",
+        kind: "secret",
+      },
+      {
+        key: "GROQ_API_KEY",
+        label: "Groq API key",
+        kind: "secret",
+      },
+      {
+        key: "CEREBRAS_API_KEY",
+        label: "Cerebras API key",
+        kind: "secret",
+      },
+      {
+        key: "TOGETHER_API_KEY",
+        label: "Together API key",
+        kind: "secret",
+      },
+      {
+        key: "MISTRAL_API_KEY",
+        label: "Mistral API key",
+        kind: "secret",
+      },
+      {
+        key: "HUGGINGFACE_API_KEY",
+        label: "Hugging Face API key",
+        kind: "secret",
+      },
+      {
+        key: "CUSTOM_LLM_API_KEY",
+        label: "Custom API key",
+        kind: "secret",
+      },
+      {
+        key: "GOOGLE_MAPS_API_KEY",
+        label: "Google Maps API key",
+        kind: "secret",
+      },
+      {
+        key: "OPENCLAW_TOKEN",
+        label: "OpenClaw token",
+        kind: "secret",
+      },
+    ],
+  },
 ];
 
 function getKeyboardType(kind: FieldKind) {
@@ -454,13 +683,9 @@ function getKeyboardType(kind: FieldKind) {
 
 function getInitialSettingsState() {
   const values: AppSettingsValues = {};
-  for (const field of ALL_SETTINGS_FIELDS) {
-    values[field.key] = field.kind === "boolean" ? false : "";
-  }
-  for (const provider of LLM_PROVIDER_OPTIONS) {
-    const config = getProviderApiKeyConfig(provider);
-    if (config) {
-      values[config.key] = "";
+  for (const section of SETTINGS_SECTIONS) {
+    for (const field of section.fields) {
+      values[field.key] = field.kind === "boolean" ? false : "";
     }
   }
   for (const group of LOCATION_SETTING_GROUPS) {
@@ -468,6 +693,10 @@ function getInitialSettingsState() {
     values[group.latitudeKey] = "";
     values[group.longitudeKey] = "";
   }
+  values.CONNECTION_AGENT = "Ollama";
+  values.BACKEND_TARGET = "Self-hosted";
+  values.VERCEL_BASE_URL = "";
+  values.MESSAGE_CHANNEL = "Telegram";
   return values;
 }
 
@@ -634,11 +863,7 @@ function formatTimeForBackend(date: Date) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-type SettingsScreenProps = {
-  onSegmentInteractionChange?: (isInteracting: boolean) => void;
-};
-
-export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenProps) {
+export function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const scrollViewRef = React.useRef<ScrollView>(null);
@@ -663,11 +888,19 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
   const [activeOptionPicker, setActiveOptionPicker] = React.useState<OptionSheetKind | null>(null);
   const [pendingOptionValue, setPendingOptionValue] = React.useState("");
   const [pendingTimezone, setPendingTimezone] = React.useState("");
+  const [collapsedSections, setCollapsedSections] = React.useState<Record<string, boolean>>({
+    Provider: true,
+    Google: true,
+    Runtime: true,
+    "Danger Zone": true,
+  });
   const [connectedAgent, setConnectedAgent] = React.useState("Ollama");
+  const [connectionMeasureWidth, setConnectionMeasureWidth] = React.useState(0);
   const [transcriptionModel, setTranscriptionModel] = React.useState("ggml-large-v3-turbo-q5_0");
   const [summarizationModel, setSummarizationModel] = React.useState("qwen2.5-0.5b-instruct");
   const [transcriptionModelOptions, setTranscriptionModelOptions] = React.useState<string[]>([]);
   const [summarizationModelOptions, setSummarizationModelOptions] = React.useState<string[]>([]);
+  const [supportedSettingKeys, setSupportedSettingKeys] = React.useState<string[]>([]);
   const [backendTarget, setBackendTarget] = React.useState("Self-hosted");
   const [vercelBaseUrl, setVercelBaseUrl] = React.useState("");
   const lastSavedSettingsRef = React.useRef("");
@@ -682,19 +915,47 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
   const timezoneSheetTranslateY = React.useRef(new Animated.Value(28)).current;
   const calendarEditorProgress = React.useRef(new Animated.Value(0)).current;
 
+  React.useEffect(() => {
+    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  const syncConnectionStateFromSettings = React.useCallback(
+    async (nextSettings: AppSettingsValues) => {
+      const nextAgent = String(nextSettings.CONNECTION_AGENT ?? "").trim() || "Ollama";
+      const nextBackendTarget =
+        String(nextSettings.BACKEND_TARGET ?? "").trim() === "Vercel"
+          ? "Vercel"
+          : "Self-hosted";
+      const nextVercelBaseUrl = String(nextSettings.VERCEL_BASE_URL ?? "").trim();
+
+      setConnectedAgent(nextAgent);
+      setBackendTarget(nextBackendTarget);
+      setVercelBaseUrl(nextVercelBaseUrl);
+
+      await saveConnectionPreferences({
+        connectedAgent: nextAgent,
+        backendTarget: nextBackendTarget,
+        vercelBaseUrl: nextVercelBaseUrl,
+      });
+    },
+    [],
+  );
+
   const loadSettings = React.useCallback(async () => {
     try {
       const response = await fetchAppSettings();
+      const nextSettings = { ...getInitialSettingsState(), ...response.settings };
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
-      setSettings((current) => {
-        const nextSettings = { ...current, ...response.settings };
-        lastSavedSettingsRef.current = serializeSettings(nextSettings);
-        hasLoadedSettingsRef.current = true;
-        return nextSettings;
-      });
+      setSettings(nextSettings);
+      setSupportedSettingKeys(Object.keys(response.settings ?? {}));
+      lastSavedSettingsRef.current = serializeSettings(nextSettings);
+      hasLoadedSettingsRef.current = true;
+      setErrorMessage(null);
       setSettingsMetadata(response.metadata ?? {});
       setWarnings(response.warnings);
       setErrors(response.errors);
@@ -710,6 +971,7 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
           response.modelOptions.summarization[0] ||
           "qwen2.5-0.5b-instruct",
       );
+      void syncConnectionStateFromSettings(nextSettings);
       setIsLoading(false);
     } catch (error) {
       console.warn(
@@ -723,7 +985,7 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
         }, SETTINGS_RETRY_DELAY_MS);
       }
     }
-  }, []);
+  }, [syncConnectionStateFromSettings]);
 
   React.useEffect(() => {
     void loadSettings();
@@ -773,30 +1035,6 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
       } catch (error) {
         console.warn(
           "[sunday] failed to load phone location preference",
-          error instanceof Error ? error.message : error,
-        );
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const preferences = await getConnectionPreferences();
-        if (!cancelled) {
-          setConnectedAgent(preferences.connectedAgent);
-          setBackendTarget(preferences.backendTarget);
-          setVercelBaseUrl(preferences.vercelBaseUrl);
-        }
-      } catch (error) {
-        console.warn(
-          "[sunday] failed to load connection preferences",
           error instanceof Error ? error.message : error,
         );
       }
@@ -886,17 +1124,29 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
 
   const handleConnectedAgentChange = React.useCallback((nextValue: string) => {
     setConnectedAgent(nextValue);
+    setSettings((current) => ({
+      ...current,
+      CONNECTION_AGENT: nextValue,
+    }));
     void saveConnectionPreferences({ connectedAgent: nextValue });
   }, []);
 
   const handleBackendTargetChange = React.useCallback((nextValue: string) => {
     const normalizedTarget = nextValue === "Vercel" ? "Vercel" : "Self-hosted";
     setBackendTarget(normalizedTarget);
+    setSettings((current) => ({
+      ...current,
+      BACKEND_TARGET: normalizedTarget,
+    }));
     void saveConnectionPreferences({ backendTarget: normalizedTarget });
   }, []);
 
   const handleVercelBaseUrlChange = React.useCallback((value: string) => {
     setVercelBaseUrl(value);
+    setSettings((current) => ({
+      ...current,
+      VERCEL_BASE_URL: value,
+    }));
   }, []);
 
   const handleVercelBaseUrlBlur = React.useCallback(() => {
@@ -913,6 +1163,8 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
       setActiveOptionPicker(kind);
       if (kind === "agent") {
         setPendingOptionValue(connectedAgent || "Ollama");
+      } else if (kind === "MESSAGE_CHANNEL") {
+        setPendingOptionValue(String(settings.MESSAGE_CHANNEL ?? "") || "Telegram");
       } else if (kind === "AGENT_MODE") {
         setPendingOptionValue(String(settings.AGENT_MODE ?? "") || "off");
       } else if (kind === "ACTIVE_LLM_PROVIDER") {
@@ -931,6 +1183,7 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
     [
       connectedAgent,
       settings.ACTIVE_LLM_PROVIDER,
+      settings.MESSAGE_CHANNEL,
       settings.LOG_LEVEL,
       settings.TRANSCRIPT_TITLE_DEVICE,
       summarizationModel,
@@ -962,6 +1215,8 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
   const confirmOptionPicker = React.useCallback(() => {
     if (activeOptionPicker === "agent") {
       handleConnectedAgentChange(pendingOptionValue || "Ollama");
+    } else if (activeOptionPicker === "MESSAGE_CHANNEL") {
+      handleTextChange("MESSAGE_CHANNEL", pendingOptionValue || "Telegram");
     } else if (activeOptionPicker === "AGENT_MODE") {
       handleTextChange("AGENT_MODE", pendingOptionValue || "off");
     } else if (activeOptionPicker === "ACTIVE_LLM_PROVIDER") {
@@ -1083,17 +1338,24 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
 
     saveTimeoutRef.current = setTimeout(() => {
       const snapshot = settings;
+      const payload =
+        supportedSettingKeys.length > 0
+          ? Object.fromEntries(
+              Object.entries(snapshot).filter(([key]) => supportedSettingKeys.includes(key)),
+            )
+          : snapshot;
 
       void (async () => {
         setIsSaving(true);
         setErrorMessage(null);
         try {
-          const response = await saveAppSettings(snapshot);
+          const response = await saveAppSettings(payload);
           if (saveId !== saveSequenceRef.current) {
             return;
           }
 
           const nextSettings = { ...snapshot, ...response.settings };
+          setSupportedSettingKeys(Object.keys(response.settings ?? {}));
           lastSavedSettingsRef.current = serializeSettings(nextSettings);
           setSettings(nextSettings);
           setSettingsMetadata(response.metadata ?? {});
@@ -1111,6 +1373,7 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
               response.modelOptions.summarization[0] ||
               summarizationModel,
           );
+          void syncConnectionStateFromSettings(nextSettings);
           setStatusMessage("Saved");
           statusTimeoutRef.current = setTimeout(() => {
             setStatusMessage((current) => (current === "Saved" ? null : current));
@@ -1128,7 +1391,14 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
         }
       })();
     }, AUTOSAVE_DELAY_MS);
-  }, [isLoading, settings, summarizationModel, transcriptionModel]);
+  }, [
+    isLoading,
+    settings,
+    summarizationModel,
+    supportedSettingKeys,
+    syncConnectionStateFromSettings,
+    transcriptionModel,
+  ]);
 
   const activeLocationGroup = React.useMemo(
     () =>
@@ -1136,6 +1406,20 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
     [activeLocationGroupId],
   );
   const timeZoneOptions = React.useMemo(() => getTimeZoneOptions(), []);
+  const orderedStandardSections = React.useMemo(() => {
+    const sectionLookup = new Map(SETTINGS_SECTIONS.map((section) => [section.title, section]));
+    return STANDARD_SECTION_ORDER.map((title) => sectionLookup.get(title)).filter(
+      (section): section is SettingSection => section != null,
+    );
+  }, []);
+  const topSections = React.useMemo(
+    () => orderedStandardSections.filter((section) => TOP_SECTION_TITLES.has(section.title)),
+    [orderedStandardSections],
+  );
+  const lowerSections = React.useMemo(
+    () => orderedStandardSections.filter((section) => !TOP_SECTION_TITLES.has(section.title)),
+    [orderedStandardSections],
+  );
   const timeZoneDisplayValue = React.useMemo(
     () => formatTimeZoneLabel(String(settings.TIMEZONE ?? "") || "America/Chicago"),
     [settings.TIMEZONE],
@@ -1186,12 +1470,26 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
     () => getConnectionFieldConfig(connectedAgent),
     [connectedAgent],
   );
+  const activeConnectionValue = String(settings[activeConnectionField.key] ?? "");
+  const connectionDisplayText = activeConnectionValue.trim() || activeConnectionField.placeholder;
+  const connectionInputWidth =
+    connectionMeasureWidth > 0
+      ? Math.min(220, Math.max(56, Math.ceil(connectionMeasureWidth + 24)))
+      : undefined;
 
   const optionPickerConfig = React.useMemo(() => {
     if (activeOptionPicker === "agent") {
       return {
         title: "Agent",
         options: CONNECTED_AGENT_OPTIONS,
+        recommendedOption: null,
+      };
+    }
+    if (activeOptionPicker === "MESSAGE_CHANNEL") {
+      return {
+        title: "Message Channel",
+        options: MESSAGE_CHANNEL_OPTIONS,
+        optionLabels: MESSAGE_CHANNEL_LABELS,
         recommendedOption: null,
       };
     }
@@ -1246,6 +1544,421 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
     }
     return null;
   }, [activeOptionPicker, summarizationModel, summarizationModelOptions, transcriptionModel, transcriptionModelOptions]);
+
+  const toggleSectionCollapse = React.useCallback((title: string) => {
+    if (!COLLAPSIBLE_SECTION_TITLES.has(title)) {
+      return;
+    }
+    LayoutAnimation.configureNext({
+      duration: 180,
+      create: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+      update: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+      delete: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+    });
+    setCollapsedSections((current) => ({
+      ...current,
+      [title]: !current[title],
+    }));
+  }, []);
+
+  const renderSectionHeader = React.useCallback(
+    (section: SettingSection) => {
+      const collapsible = COLLAPSIBLE_SECTION_TITLES.has(section.title);
+      const collapsed = Boolean(collapsedSections[section.title]);
+
+      if (!collapsible) {
+        return (
+          <View style={styles.sectionHeader}>
+            <Text
+              style={[
+                styles.sectionTitle,
+                section.tone === "danger" && styles.sectionTitleDanger,
+              ]}
+            >
+              {section.title}
+            </Text>
+          </View>
+        );
+      }
+
+      return (
+        <Pressable onPress={() => toggleSectionCollapse(section.title)} style={styles.sectionHeader}>
+          <Text
+            style={[
+              styles.sectionTitle,
+              section.tone === "danger" && styles.sectionTitleDanger,
+            ]}
+          >
+            {section.title}
+          </Text>
+          <View style={styles.sectionChevronWrap}>
+            {collapsed ? (
+              <SectionChevronRightIcon color={section.tone === "danger" ? "#ff8f8f" : "#e3e3e3"} />
+            ) : (
+              <SectionChevronDownIcon color={section.tone === "danger" ? "#ff8f8f" : "#e3e3e3"} />
+            )}
+          </View>
+        </Pressable>
+      );
+    },
+    [collapsedSections, toggleSectionCollapse],
+  );
+
+  const renderSettingsSection = React.useCallback(
+    (section: SettingSection) => {
+      const isCollapsed = Boolean(collapsedSections[section.title]);
+      const visibleFields = section.fields.filter((field) => {
+        if (section.title !== "Messaging") {
+          return true;
+        }
+
+        const channel = String(settings.MESSAGE_CHANNEL ?? "").trim() || "Telegram";
+        if (field.key === "IMESSAGE_ENABLED") {
+          return false;
+        }
+        if (field.key === "IMESSAGE_RECIPIENT") {
+          return channel === "iMessage";
+        }
+        if (field.key === "TELEGRAM_BOT_TOKEN" || field.key === "TELEGRAM_CHAT_ID") {
+          return channel === "Telegram";
+        }
+        if (
+          field.key === "WHATSAPP_ACCESS_TOKEN"
+          || field.key === "WHATSAPP_PHONE_NUMBER_ID"
+          || field.key === "WHATSAPP_RECIPIENT"
+        ) {
+          return channel === "WhatsApp";
+        }
+        return true;
+      });
+
+      return (
+        <View key={section.title} style={styles.section}>
+          {renderSectionHeader(section)}
+          {isCollapsed ? null : (
+            <View style={styles.sectionPanel}>
+              {section.title === "Locations"
+                ? (
+                    <>
+                      {LOCATION_SETTING_GROUPS.map((group) => {
+                        const locationValue = String(settings[group.locationKey] ?? "");
+
+                        return (
+                          <View
+                            key={group.id}
+                            style={[
+                              styles.fieldRow,
+                              styles.fieldRowInline,
+                              styles.locationFieldRow,
+                              styles.fieldRowBorder,
+                            ]}
+                          >
+                            <View
+                              style={[
+                                styles.fieldHeader,
+                                styles.fieldHeaderInline,
+                                styles.locationFieldHeader,
+                              ]}
+                            >
+                              <View style={styles.locationIconWrap}>
+                                {group.id === "home" ? <HomeLocationIcon /> : <WorkLocationIcon />}
+                              </View>
+                            </View>
+
+                            <Pressable
+                              onPress={() => setActiveLocationGroupId(group.id)}
+                              style={styles.locationValueButton}
+                            >
+                              <Text
+                                numberOfLines={1}
+                                style={[
+                                  styles.locationValueText,
+                                  !locationValue && styles.locationValuePlaceholder,
+                                ]}
+                              >
+                                {locationValue || group.placeholder}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                      <View style={[styles.fieldRow, styles.fieldRowInline]}>
+                        <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                          <Text style={styles.fieldLabel}>Use your phone location</Text>
+                        </View>
+                        <Switch
+                          value={isPhoneLocationEnabled}
+                          onValueChange={(value) => {
+                            void handlePhoneLocationToggle(value);
+                          }}
+                          ios_backgroundColor={TOGGLE_OFF}
+                          trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
+                          thumbColor={isPhoneLocationEnabled ? "#ffffff" : "#d6d6d6"}
+                        />
+                      </View>
+                    </>
+                  )
+                : visibleFields.map((field, index) => {
+                    const rawValue = settings[field.key];
+                    const stringValue = typeof rawValue === "boolean" ? "" : String(rawValue ?? "");
+                    const boolValue = rawValue === true;
+
+                    return (
+                      <View
+                        key={field.key}
+                        style={[
+                          (field.kind === "boolean" ||
+                            field.kind === "select" ||
+                            field.key === "TARGET_CALENDAR_ID" ||
+                            isNumericPickerKey(field.key) ||
+                            isTimeSettingKey(field.key) ||
+                            field.key === "TIMEZONE") &&
+                            styles.fieldRowInline,
+                          styles.fieldRow,
+                          index !== visibleFields.length - 1 && styles.fieldRowBorder,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.fieldHeader,
+                            (field.kind === "boolean" ||
+                              field.kind === "select" ||
+                              field.key === "TARGET_CALENDAR_ID" ||
+                              isNumericPickerKey(field.key) ||
+                              isTimeSettingKey(field.key) ||
+                              field.key === "TIMEZONE") &&
+                              styles.fieldHeaderInline,
+                          ]}
+                        >
+                          <Text numberOfLines={1} style={styles.fieldLabel}>
+                            {field.label}
+                          </Text>
+                        </View>
+
+                        {field.kind === "boolean" ? (
+                          <Switch
+                            value={boolValue}
+                            onValueChange={(value) => handleToggleChange(field.key, value)}
+                            ios_backgroundColor={TOGGLE_OFF}
+                            trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
+                            thumbColor={boolValue ? "#ffffff" : "#d6d6d6"}
+                          />
+                        ) : field.key === "WORK_DAYS" ? (
+                          <View style={styles.workdayRow}>
+                            {WORKDAY_OPTIONS.map((option) => {
+                              const selected = parseWorkDays(stringValue).has(option.value);
+                              return (
+                                <Pressable
+                                  key={option.value}
+                                  onPress={() => handleWorkDayToggle(option.value)}
+                                  style={[
+                                    styles.workdayButton,
+                                    selected && styles.workdayButtonSelected,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.workdayButtonText,
+                                      selected && styles.workdayButtonTextSelected,
+                                    ]}
+                                  >
+                                    {option.label}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : isTimeSettingKey(field.key) ? (
+                          (() => {
+                            const timeKey = field.key;
+                            return (
+                              <DateTimePicker
+                                value={getTimeSettingDate(settings[timeKey])}
+                                mode="time"
+                                display={Platform.OS === "ios" ? "compact" : "default"}
+                                themeVariant="dark"
+                                accentColor="#ffffff"
+                                onChange={(event, selectedDate) =>
+                                  handleTimeChange(timeKey, event, selectedDate)
+                                }
+                                style={styles.timePicker}
+                              />
+                            );
+                          })()
+                        ) : field.key === "TRAVEL_TYPE" ? (
+                          <TravelTypeSelector
+                            value={stringValue || "driving"}
+                            onChange={(value) => handleTextChange(field.key, value)}
+                          />
+                        ) : field.kind === "choice" ? (
+                          <View style={styles.choiceRow}>
+                            {field.options?.map((option) => {
+                              const selected = stringValue === option;
+                              return (
+                                <Pressable
+                                  key={option}
+                                  onPress={() => handleTextChange(field.key, option)}
+                                  style={[
+                                    styles.choiceChip,
+                                    selected && styles.choiceChipSelected,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.choiceChipText,
+                                      selected && styles.choiceChipTextSelected,
+                                    ]}
+                                  >
+                                    {option}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : field.key === "TARGET_CALENDAR_ID" ? (
+                          <Animated.View
+                            style={[styles.calendarFieldAnimatedWrap, calendarFieldAnimatedStyle]}
+                          >
+                            <Text
+                              onLayout={(event) => setCalendarDisplayWidth(event.nativeEvent.layout.width)}
+                              style={[styles.calendarMeasureText, styles.selectTriggerText]}
+                            >
+                              {targetCalendarDisplayValue}
+                            </Text>
+                            {isEditingCalendarId ? (
+                              <TextInput
+                                ref={calendarIdInputRef}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                keyboardAppearance="dark"
+                                multiline={false}
+                                numberOfLines={1}
+                                onBlur={closeCalendarIdEditor}
+                                onChangeText={handleCalendarIdChange}
+                                onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                                onSubmitEditing={closeCalendarIdEditor}
+                                placeholder={field.placeholder}
+                                placeholderTextColor="#6f6f6f"
+                                selectTextOnFocus
+                                style={[styles.input, styles.calendarIdInput]}
+                                value={stringValue}
+                              />
+                            ) : (
+                              <Pressable
+                                onPress={openCalendarIdEditor}
+                                style={[styles.selectTrigger, styles.calendarSelectTrigger]}
+                              >
+                                <Text
+                                  numberOfLines={1}
+                                  style={[
+                                    styles.selectTriggerText,
+                                    styles.calendarSelectTriggerText,
+                                  ]}
+                                >
+                                  {targetCalendarDisplayValue}
+                                </Text>
+                              </Pressable>
+                            )}
+                          </Animated.View>
+                        ) : field.key === "TIMEZONE" ? (
+                          <Pressable onPress={openTimezonePicker} style={styles.selectTrigger}>
+                            <Text numberOfLines={1} style={styles.selectTriggerText}>
+                              {timeZoneDisplayValue || field.placeholder || "Select"}
+                            </Text>
+                          </Pressable>
+                        ) : field.key === "MESSAGE_CHANNEL" ? (
+                          <Pressable
+                            onPress={() => openOptionPicker("MESSAGE_CHANNEL")}
+                            style={styles.selectTrigger}
+                          >
+                            <Text numberOfLines={1} style={styles.selectTriggerText}>
+                              {MESSAGE_CHANNEL_LABELS[stringValue] || stringValue || "Select"}
+                            </Text>
+                          </Pressable>
+                        ) : field.kind === "select" ? (
+                          <Pressable
+                            onPress={() => openOptionPicker(field.key as OptionSheetKind)}
+                            style={styles.selectTrigger}
+                          >
+                            <Text numberOfLines={1} style={styles.selectTriggerText}>
+                              {stringValue || field.placeholder || "Select"}
+                            </Text>
+                          </Pressable>
+                        ) : isNumericPickerKey(field.key) ? (
+                          (() => {
+                            const numericKey = field.key;
+                            return (
+                              <TextInput
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                inputMode="numeric"
+                                keyboardAppearance="dark"
+                                keyboardType="number-pad"
+                                onChangeText={(value) =>
+                                  handleTextChange(numericKey, value.replace(/[^\d]/g, ""))
+                                }
+                                onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                                placeholder="0"
+                                placeholderTextColor="#6f6f6f"
+                                selectTextOnFocus
+                                style={styles.numericInput}
+                                value={stringValue}
+                              />
+                            );
+                          })()
+                        ) : (
+                          <TextInput
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardAppearance="dark"
+                            keyboardType={getKeyboardType(field.kind)}
+                            onChangeText={(value) => handleTextChange(field.key, value)}
+                            onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                            placeholder={field.placeholder}
+                            placeholderTextColor="#6f6f6f"
+                            secureTextEntry={field.kind === "secret"}
+                            style={styles.input}
+                            value={stringValue}
+                          />
+                        )}
+                      </View>
+                    );
+                  })}
+            </View>
+          )}
+        </View>
+      );
+    },
+    [
+      calendarEditorProgress,
+      collapsedSections,
+      handleCalendarIdChange,
+      handlePhoneLocationToggle,
+      handleTextChange,
+      handleTextInputFocus,
+      handleTimeChange,
+      handleToggleChange,
+      handleWorkDayToggle,
+      isEditingCalendarId,
+      isPhoneLocationEnabled,
+      settings.MESSAGE_CHANNEL,
+      openCalendarIdEditor,
+      openTimezonePicker,
+      renderSectionHeader,
+      settings,
+      targetCalendarDisplayValue,
+      timeZoneDisplayValue,
+    ],
+  );
 
   React.useEffect(() => {
     if (isOptionPickerVisible) {
@@ -1470,7 +2183,6 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
             <TravelTypeSelector
               value={stringValue || "driving"}
               onChange={(value) => handleTextChange(field.key, value)}
-              onInteractionChange={onSegmentInteractionChange}
             />
           ) : field.kind === "choice" ? (
             <View style={styles.choiceRow}>
@@ -1604,7 +2316,6 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
       handleToggleChange,
       handleWorkDayToggle,
       isEditingCalendarId,
-      onSegmentInteractionChange,
       openCalendarIdEditor,
       openOptionPicker,
       openTimezonePicker,
@@ -1647,7 +2358,7 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
         </View>
 
         <>
-          {/* ── Connection (first — setup flow) ── */}
+          {topSections.map(renderSettingsSection)}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Connection</Text>
             <View style={styles.sectionPanel}>
@@ -1664,6 +2375,13 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
                 <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
                   <Text numberOfLines={1} style={styles.fieldLabel}>{activeConnectionField.label}</Text>
                 </View>
+                <Text
+                  key={`${activeConnectionField.key}-${connectionDisplayText}`}
+                  onLayout={(event) => setConnectionMeasureWidth(event.nativeEvent.layout.width)}
+                  style={styles.connectionMeasureText}
+                >
+                  {connectionDisplayText}
+                </Text>
                 <TextInput
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -1673,8 +2391,12 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
                   placeholder={activeConnectionField.placeholder}
                   placeholderTextColor="#6f6f6f"
                   secureTextEntry={activeConnectionField.secure}
-                  style={[styles.input, styles.connectionInput]}
-                  value={String(settings[activeConnectionField.key] ?? "")}
+                  style={[
+                    styles.input,
+                    styles.connectionInput,
+                    connectionInputWidth ? { width: connectionInputWidth } : null,
+                  ]}
+                  value={activeConnectionValue}
                 />
               </View>
 
@@ -1686,7 +2408,6 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
                   options={BACKEND_OPTIONS}
                   value={backendTarget}
                   onChange={handleBackendTargetChange}
-                  onInteractionChange={onSegmentInteractionChange}
                 />
               </View>
 
@@ -1713,239 +2434,9 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
             </View>
           </View>
 
-          {/* ── Primary sections (Calendar, Locations, Schedule, Notifications) ── */}
-          {PRIMARY_SECTIONS.map((section) => {
-            const visibleFields = section.fields.filter((field) => {
-              if (field.key === "IMESSAGE_RECIPIENT" && settings.IMESSAGE_ENABLED !== true) {
-                return false;
-              }
-              return true;
-            });
-
-            return (
-              <View key={section.title} style={styles.section}>
-                <Text style={styles.sectionTitle}>{section.title}</Text>
-                <View style={styles.sectionPanel}>
-                  {section.title === "Locations" ? (
-                    <>
-                      {LOCATION_SETTING_GROUPS.map((group) => {
-                        const locationValue = String(settings[group.locationKey] ?? "");
-                        return (
-                          <View
-                            key={group.id}
-                            style={[
-                              styles.fieldRow,
-                              styles.fieldRowInline,
-                              styles.locationFieldRow,
-                              styles.fieldRowBorder,
-                            ]}
-                          >
-                            <View style={[styles.fieldHeader, styles.fieldHeaderInline, styles.locationFieldHeader]}>
-                              <View style={styles.locationIconWrap}>
-                                {group.id === "home" ? <HomeLocationIcon /> : <WorkLocationIcon />}
-                              </View>
-                            </View>
-                            <Pressable
-                              onPress={() => setActiveLocationGroupId(group.id)}
-                              style={styles.locationValueButton}
-                            >
-                              <Text
-                                numberOfLines={1}
-                                style={[
-                                  styles.locationValueText,
-                                  !locationValue && styles.locationValuePlaceholder,
-                                ]}
-                              >
-                                {locationValue || group.placeholder}
-                              </Text>
-                            </Pressable>
-                          </View>
-                        );
-                      })}
-                      <View style={[styles.fieldRow, styles.fieldRowInline, isPhoneLocationEnabled && phoneLocationLabel ? styles.fieldRowBorder : undefined]}>
-                        <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                          <Text style={styles.fieldLabel}>Use your phone location</Text>
-                        </View>
-                        <Switch
-                          value={isPhoneLocationEnabled}
-                          onValueChange={(value) => {
-                            void handlePhoneLocationToggle(value);
-                          }}
-                          ios_backgroundColor={TOGGLE_OFF}
-                          trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-                          thumbColor={isPhoneLocationEnabled ? "#ffffff" : "#d6d6d6"}
-                        />
-                      </View>
-                      {isPhoneLocationEnabled && phoneLocationLabel ? (
-                        <View style={[styles.fieldRow]}>
-                          <Text numberOfLines={1} style={styles.phoneLocationLabel}>
-                            {phoneLocationLabel}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </>
-                  ) : (
-                    visibleFields.map((field, index) =>
-                      renderFieldRow(field, index, visibleFields.length),
-                    )
-                  )}
-                </View>
-              </View>
-            );
-          })}
-
-          {/* ── Intelligence (two independent toggles + models) ── */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Intelligence</Text>
-            <Text style={styles.sectionHint}>Add AI insights on top of your summaries. Enable one or both.</Text>
+            <Text style={styles.sectionTitle}>Models</Text>
             <View style={styles.sectionPanel}>
-              {/* ── Built-in AI toggle ── */}
-              {(() => {
-                const agentMode = String(settings.AGENT_MODE ?? "off");
-                const builtinOn = agentMode === "builtin" || agentMode === "both";
-                const openclawOn = agentMode === "openclaw" || agentMode === "both";
-
-                const toggleBuiltin = (next: boolean) => {
-                  let mode: string;
-                  if (next && openclawOn) mode = "both";
-                  else if (next) mode = "builtin";
-                  else if (openclawOn) mode = "openclaw";
-                  else mode = "off";
-                  handleTextChange("AGENT_MODE", mode);
-                };
-
-                const toggleOpenclaw = (next: boolean) => {
-                  let mode: string;
-                  if (next && builtinOn) mode = "both";
-                  else if (next) mode = "openclaw";
-                  else if (builtinOn) mode = "builtin";
-                  else mode = "off";
-                  handleTextChange("AGENT_MODE", mode);
-                };
-
-                const provider = String(settings.ACTIVE_LLM_PROVIDER ?? "gemini");
-                const apiKeyConfig = getProviderApiKeyConfig(provider);
-
-                return (
-                  <>
-                    <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                      <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                        <Text numberOfLines={1} style={styles.fieldLabel}>Built-in AI</Text>
-                      </View>
-                      <Switch
-                        value={builtinOn}
-                        onValueChange={toggleBuiltin}
-                        ios_backgroundColor={TOGGLE_OFF}
-                        trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-                        thumbColor={builtinOn ? "#ffffff" : "#d6d6d6"}
-                      />
-                    </View>
-
-                    {builtinOn && (
-                      <>
-                        <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                          <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                            <Text numberOfLines={1} style={styles.fieldLabel}>Provider</Text>
-                          </View>
-                          <Pressable onPress={() => openOptionPicker("ACTIVE_LLM_PROVIDER")} style={styles.selectTrigger}>
-                            <Text numberOfLines={1} style={styles.selectTriggerText}>{provider}</Text>
-                          </Pressable>
-                        </View>
-                        {apiKeyConfig ? (
-                          <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                            <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                              <Text numberOfLines={1} style={styles.fieldLabel}>API key</Text>
-                            </View>
-                            <TextInput
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              keyboardAppearance="dark"
-                              onChangeText={(value) => handleTextChange(apiKeyConfig.key, value)}
-                              onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                              placeholder={apiKeyConfig.placeholder}
-                              placeholderTextColor="#6f6f6f"
-                              secureTextEntry
-                              style={[styles.input, styles.connectionInput]}
-                              value={String(settings[apiKeyConfig.key] ?? "")}
-                            />
-                          </View>
-                        ) : (
-                          <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                            <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                              <Text numberOfLines={1} style={styles.fieldLabel}>Ollama URL</Text>
-                            </View>
-                            <TextInput
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              keyboardAppearance="dark"
-                              onChangeText={(value) => handleTextChange("OLLAMA_BASE_URL", value)}
-                              onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                              placeholder="http://localhost:11434"
-                              placeholderTextColor="#6f6f6f"
-                              style={[styles.input, styles.connectionInput]}
-                              value={String(settings.OLLAMA_BASE_URL ?? "")}
-                            />
-                          </View>
-                        )}
-                      </>
-                    )}
-
-                    {/* ── OpenClaw toggle ── */}
-                    <View style={[styles.fieldRow, styles.fieldRowInline, openclawOn ? styles.fieldRowBorder : undefined]}>
-                      <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                        <Text numberOfLines={1} style={styles.fieldLabel}>OpenClaw</Text>
-                      </View>
-                      <Switch
-                        value={openclawOn}
-                        onValueChange={toggleOpenclaw}
-                        ios_backgroundColor={TOGGLE_OFF}
-                        trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-                        thumbColor={openclawOn ? "#ffffff" : "#d6d6d6"}
-                      />
-                    </View>
-
-                    {openclawOn && (
-                      <>
-                        <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                          <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                            <Text numberOfLines={1} style={styles.fieldLabel}>URL</Text>
-                          </View>
-                          <TextInput
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            keyboardAppearance="dark"
-                            onChangeText={(value) => handleTextChange("OPENCLAW_BASE_URL", value)}
-                            onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                            placeholder="http://localhost:18789"
-                            placeholderTextColor="#6f6f6f"
-                            style={[styles.input, styles.connectionInput]}
-                            value={String(settings.OPENCLAW_BASE_URL ?? "")}
-                          />
-                        </View>
-                        <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                          <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                            <Text numberOfLines={1} style={styles.fieldLabel}>Token</Text>
-                          </View>
-                          <TextInput
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            keyboardAppearance="dark"
-                            onChangeText={(value) => handleTextChange("OPENCLAW_TOKEN", value)}
-                            onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                            placeholder="hook token"
-                            placeholderTextColor="#6f6f6f"
-                            secureTextEntry
-                            style={[styles.input, styles.connectionInput]}
-                            value={String(settings.OPENCLAW_TOKEN ?? "")}
-                          />
-                        </View>
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-
-              {/* Model pickers — always visible */}
               <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
                 <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
                   <Text numberOfLines={1} style={styles.fieldLabel}>Transcription</Text>
@@ -1971,48 +2462,7 @@ export function SettingsScreen({ onSegmentInteractionChange }: SettingsScreenPro
               </View>
             </View>
           </View>
-
-          {/* ── Advanced (collapsed by default) ── */}
-          <AdvancedSection>
-            {ADVANCED_SECTIONS.map((section) => (
-              <AdvancedSubSection
-                key={section.title}
-                title={section.title}
-              >
-                {section.fields.map((field, index) =>
-                  renderFieldRow(field, index, section.fields.length),
-                )}
-              </AdvancedSubSection>
-            ))}
-
-            {/* AI Provider — only active provider's fields */}
-            <AdvancedSubSection title="AI Provider" isLast>
-              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>Provider</Text>
-                </View>
-                <Pressable onPress={() => openOptionPicker("ACTIVE_LLM_PROVIDER")} style={styles.selectTrigger}>
-                  <Text numberOfLines={1} style={styles.selectTriggerText}>
-                    {String(settings.ACTIVE_LLM_PROVIDER ?? "gemini")}
-                  </Text>
-                </Pressable>
-              </View>
-              {(() => {
-                const provider = String(settings.ACTIVE_LLM_PROVIDER ?? "gemini");
-                const providerFields = PROVIDER_FIELDS[provider] ?? [];
-                const apiKeyConfig = getProviderApiKeyConfig(provider);
-                const allFields = [
-                  ...providerFields,
-                  ...(apiKeyConfig
-                    ? [{ key: apiKeyConfig.key, label: "API key", kind: "secret" as FieldKind, placeholder: apiKeyConfig.placeholder }]
-                    : []),
-                ];
-                return allFields.map((field, index) =>
-                  renderFieldRow(field, index + 1, allFields.length + 1),
-                );
-              })()}
-            </AdvancedSubSection>
-          </AdvancedSection>
+          {lowerSections.map(renderSettingsSection)}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
           {errors.map((error) => (
@@ -2210,6 +2660,12 @@ const styles = StyleSheet.create({
   section: {
     gap: 10,
   },
+  sectionHeader: {
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   sectionTitle: {
     color: "#ffffff",
     fontFamily: FONTS.semibold,
@@ -2224,6 +2680,12 @@ const styles = StyleSheet.create({
   },
   sectionTitleDanger: {
     color: "#ff8f8f",
+  },
+  sectionChevronWrap: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sectionPanel: {
     borderRadius: 22,
@@ -2271,10 +2733,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   connectionInput: {
-    minWidth: 170,
+    minWidth: 0,
     maxWidth: 220,
     textAlign: "right",
     alignSelf: "flex-end",
+  },
+  connectionMeasureText: {
+    position: "absolute",
+    opacity: 0,
+    left: -9999,
+    color: "#6f6f6f",
+    fontFamily: FONTS.regular,
+    fontSize: 14,
   },
   timePicker: {
     width: Platform.OS === "ios" ? 118 : 128,

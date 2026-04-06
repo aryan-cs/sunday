@@ -352,16 +352,79 @@ def _settings_model_options() -> dict[str, list[str]]:
     }
 
 
-def _map_calendar_event(item: dict) -> dict:
+def _list_readable_calendars() -> list[dict[str, str | None]]:
+    """Return readable calendars with friendly labels and Google colors when available."""
+    calendar = CalendarManager()
+    calendars: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+    page_token: str | None = None
+
+    while True:
+        kwargs = {"pageToken": page_token} if page_token else {}
+        result = calendar.service.calendarList().list(**kwargs).execute()
+
+        for item in result.get("items", []):
+            calendar_id = str(item.get("id") or "").strip()
+            if not calendar_id or calendar_id in seen:
+                continue
+
+            seen.add(calendar_id)
+            calendars.append(
+                {
+                    "id": calendar_id,
+                    "name": str(item.get("summary") or calendar_id).strip() or calendar_id,
+                    "default_color": str(item.get("backgroundColor") or "").strip() or None,
+                }
+            )
+
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    target_calendar_id = Config.target_calendar_id.strip() or "primary"
+    if target_calendar_id not in seen:
+        calendars.append(
+            {
+                "id": target_calendar_id,
+                "name": _resolve_target_calendar_label(),
+                "default_color": None,
+            }
+        )
+
+    return sorted(calendars, key=lambda calendar_item: str(calendar_item["name"]).lower())
+
+
+def _map_calendar_event(
+    item: dict,
+    calendar_lookup: dict[str, dict[str, str | None]] | None = None,
+) -> dict:
     """Map a Google Calendar event dict to the shape the app expects."""
     private = (item.get("extendedProperties") or {}).get("private") or {}
     leave_by_iso = (private.get(CalendarManager.LEAVE_ALERT_AT_PROPERTY) or "").strip() or None
     display_location = private.get(CalendarManager.DISPLAY_LOCATION_PROPERTY) or item.get("location")
+    start_data = item.get("start") or {}
+    end_data = item.get("end") or {}
+    calendar_id = str(item.get("calendarId") or "").strip()
+    calendar_meta = calendar_lookup.get(calendar_id, {}) if calendar_lookup else {}
+    meeting_link = _extract_meeting_link(item.get("description")) or item.get("hangoutLink")
+    is_all_day = bool(start_data.get("date") and not start_data.get("dateTime"))
+    attendees = [
+        {
+            "name": str(attendee.get("displayName") or attendee.get("email") or "").strip(),
+            "email": str(attendee.get("email") or "").strip() or None,
+            "response_status": str(attendee.get("responseStatus") or "").strip() or None,
+        }
+        for attendee in item.get("attendees", [])
+        if isinstance(attendee, dict)
+        and str(attendee.get("displayName") or attendee.get("email") or "").strip()
+    ]
+    description = str(item.get("description") or "").strip() or None
+    notes = str(private.get("smartCalendarNotes") or "").strip() or None
 
     travel_minutes: int | None = None
     if leave_by_iso:
         try:
-            start_raw = (item.get("start") or {}).get("dateTime", "")
+            start_raw = start_data.get("dateTime", "")
             start_dt = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
             leave_dt = datetime.fromisoformat(leave_by_iso.replace("Z", "+00:00"))
             travel_minutes = max(0, round((start_dt - leave_dt).total_seconds() / 60) - Config.prep_time)
@@ -370,15 +433,22 @@ def _map_calendar_event(item: dict) -> dict:
 
     return {
         "id": item.get("id", ""),
+        "calendar_id": calendar_id,
+        "calendar_name": calendar_meta.get("name") or calendar_id or "Calendar",
+        "calendar_default_color": calendar_meta.get("default_color"),
         "title": item.get("summary") or "Untitled",
         "location": display_location,
-        "start_iso": (item.get("start") or {}).get("dateTime", ""),
-        "end_iso": (item.get("end") or {}).get("dateTime", ""),
+        "start_iso": start_data.get("dateTime") or start_data.get("date") or "",
+        "end_iso": end_data.get("dateTime") or end_data.get("date") or "",
         "travel_minutes": travel_minutes,
         "travel_mode": Config.travel_mode,
         "leave_by_iso": leave_by_iso,
-        "is_online": not bool(item.get("location")),
-        "meeting_link": _extract_meeting_link(item.get("description")),
+        "is_online": bool(meeting_link),
+        "is_all_day": is_all_day,
+        "meeting_link": meeting_link,
+        "description": description,
+        "attendees": attendees,
+        "notes": notes,
     }
 
 
@@ -418,8 +488,14 @@ async def status():
         "ready": not report["errors"],
         "llm_provider": Config.active_llm,
         "llm_model": Config.llm_providers.get(Config.active_llm, {}).get("model"),
+        "message_channel": Config.message_channel,
         "telegram_configured": bool(Config.telegram_token and Config.telegram_chat_id),
         "imessage_enabled": Config.imessage_enabled,
+        "whatsapp_configured": bool(
+            Config.whatsapp_access_token
+            and Config.whatsapp_phone_number_id
+            and Config.whatsapp_recipient
+        ),
         "maps_configured": bool(Config.google_maps_key),
         "expo_push_enabled": Config.expo_push_enabled,
         "errors": report["errors"],
@@ -573,9 +649,20 @@ async def get_events():
         calendar = CalendarManager()
         now = datetime.now(timezone.utc)
         items = calendar.list_events_in_window(now, now + timedelta(hours=48))
+        calendars = _list_readable_calendars()
+        calendar_lookup = {
+            str(calendar_item["id"]): calendar_item
+            for calendar_item in calendars
+        }
 
         seen: set[str] = set()
-        unique = [i for i in items if i.get("id") not in seen and not seen.add(i.get("id", ""))]
+        unique: list[dict] = []
+        for item in items:
+            dedupe_key = f"{item.get('calendarId', '')}:{item.get('id', '')}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            unique.append(item)
 
         origin, lat, lng = _get_app_origin()
         cache = _load_travel_cache()
@@ -584,7 +671,7 @@ async def get_events():
 
         results = []
         for item in unique:
-            mapped = _map_calendar_event(item)
+            mapped = _map_calendar_event(item, calendar_lookup)
             location = item.get("location")
 
             if travel and origin and lat is not None and lng is not None and location:
@@ -631,7 +718,10 @@ async def get_events():
         if cache_dirty:
             _save_travel_cache(cache)
 
-        return {"events": results}
+        return {
+            "events": results,
+            "calendars": calendars,
+        }
     except Exception as exc:
         log.exception("Events fetch error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -11,6 +11,16 @@ CONFIG_FILE_PATH = PROJECT_ROOT / "config.env"
 
 _AGENT_MODE_OPTIONS = ("off", "openclaw", "builtin", "both")
 _TRAVEL_TYPE_OPTIONS = ("driving", "walking", "bicycling", "transit")
+_MESSAGE_CHANNEL_OPTIONS = ("iMessage", "Telegram", "WhatsApp")
+_CONNECTION_AGENT_OPTIONS = (
+    "Sunday",
+    "OpenAI",
+    "Anthropic",
+    "Gemini",
+    "Ollama",
+    "OpenClaw",
+)
+_BACKEND_TARGET_OPTIONS = ("Self-hosted", "Vercel")
 _PROVIDER_OPTIONS = tuple(Config.llm_providers.keys())
 _TITLE_DEVICE_OPTIONS = ("auto", "cpu", "mps", "cuda")
 _LOG_LEVEL_OPTIONS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
@@ -46,6 +56,9 @@ APP_SETTINGS: tuple[AppSettingDefinition, ...] = (
     AppSettingDefinition("OPENCLAW_BASE_URL", "openclaw_base_url", "text"),
     AppSettingDefinition("OPENCLAW_TOKEN", "openclaw_token", "secret"),
     AppSettingDefinition("OPENCLAW_ENABLED", "openclaw_enabled", "bool"),
+    AppSettingDefinition("CONNECTION_AGENT", "connection_agent", "choice", _CONNECTION_AGENT_OPTIONS),
+    AppSettingDefinition("BACKEND_TARGET", "backend_target", "choice", _BACKEND_TARGET_OPTIONS),
+    AppSettingDefinition("VERCEL_BASE_URL", "vercel_base_url", "text"),
     AppSettingDefinition("GROQ_API_KEY", "llm_providers.groq.api_key", "secret"),
     AppSettingDefinition("GROQ_MODEL", "llm_providers.groq.model", "text"),
     AppSettingDefinition("CEREBRAS_API_KEY", "llm_providers.cerebras.api_key", "secret"),
@@ -65,10 +78,14 @@ APP_SETTINGS: tuple[AppSettingDefinition, ...] = (
     AppSettingDefinition("GOOGLE_TOKEN_FILE", "google_token_file", "path"),
     AppSettingDefinition("GOOGLE_MAPS_API_KEY", "google_maps_key", "secret"),
     AppSettingDefinition("TARGET_CALENDAR_ID", "target_calendar_id", "text"),
+    AppSettingDefinition("MESSAGE_CHANNEL", "message_channel", "choice", _MESSAGE_CHANNEL_OPTIONS),
     AppSettingDefinition("TELEGRAM_BOT_TOKEN", "telegram_token", "secret"),
     AppSettingDefinition("TELEGRAM_CHAT_ID", "telegram_chat_id", "secret"),
     AppSettingDefinition("IMESSAGE_ENABLED", "imessage_enabled", "bool"),
     AppSettingDefinition("IMESSAGE_RECIPIENT", "imessage_recipient", "text"),
+    AppSettingDefinition("WHATSAPP_ACCESS_TOKEN", "whatsapp_access_token", "secret"),
+    AppSettingDefinition("WHATSAPP_PHONE_NUMBER_ID", "whatsapp_phone_number_id", "text"),
+    AppSettingDefinition("WHATSAPP_RECIPIENT", "whatsapp_recipient", "text"),
     AppSettingDefinition("TEXT_EMAIL_LINKS", "text_email_links", "bool"),
     AppSettingDefinition("DEFAULT_HOME_LOCATION", "default_home_location", "text"),
     AppSettingDefinition("DEFAULT_HOME_LATITUDE", "default_home_lat", "optional_float"),
@@ -347,17 +364,25 @@ def _apply_runtime_updates(normalized: dict[str, tuple[str, object]]) -> None:
 
 
 def update_app_settings(updates: dict[str, str | bool | int | float | None]) -> dict[str, str | bool]:
-    unknown = sorted(set(updates) - set(APP_SETTINGS_BY_KEY))
-    if unknown:
-        raise ValueError(f"Unknown settings: {', '.join(unknown)}")
+    known_updates = {
+        key: value
+        for key, value in updates.items()
+        if key in APP_SETTINGS_BY_KEY
+    }
+    if not known_updates:
+        return get_app_settings()
 
     normalized: dict[str, tuple[str, object]] = {}
-    for key, raw_value in updates.items():
+    for key, raw_value in known_updates.items():
         setting = APP_SETTINGS_BY_KEY[key]
         try:
             normalized[key] = _normalize_setting_value(setting, raw_value)
         except ValueError as exc:
             raise ValueError(f"{key} {exc}") from exc
+
+    if "MESSAGE_CHANNEL" in normalized and "IMESSAGE_ENABLED" not in normalized:
+        is_imessage = normalized["MESSAGE_CHANNEL"][1] == "iMessage"
+        normalized["IMESSAGE_ENABLED"] = ("true" if is_imessage else "false", is_imessage)
 
     _persist_updates_to_config({key: env_value for key, (env_value, _) in normalized.items()})
     _apply_runtime_updates(normalized)

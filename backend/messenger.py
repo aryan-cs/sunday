@@ -1,7 +1,8 @@
 """
 messenger.py — Messaging output layer.
 
-Sends formatted summaries to Telegram and/or iMessage (macOS only).
+Sends formatted summaries through the configured channel:
+Telegram, iMessage (macOS only), or WhatsApp Cloud API.
 """
 from __future__ import annotations
 
@@ -230,7 +231,7 @@ class IMessageSender:
 
     async def send(self, message: str) -> bool:
         """Send a plain-text iMessage to the configured recipient."""
-        if not Config.imessage_enabled:
+        if not Config.imessage_enabled and Config.message_channel != "iMessage":
             return False
 
         if not Config.imessage_recipient:
@@ -264,6 +265,58 @@ end tell
             raise MessagingDeliveryError("iMessage send timed out.") from exc
 
         log.debug("iMessage sent to %s", Config.imessage_recipient)
+        return True
+
+
+def _normalize_whatsapp_recipient(value: str) -> str:
+    """Return an E.164-style WhatsApp recipient without punctuation."""
+    return re.sub(r"\D+", "", value)
+
+
+class WhatsAppMessenger:
+    """Send messages through Meta's WhatsApp Cloud API."""
+
+    async def send(self, message: str) -> bool:
+        if (
+            not Config.whatsapp_access_token
+            or not Config.whatsapp_phone_number_id
+            or not Config.whatsapp_recipient
+        ):
+            return False
+
+        recipient = _normalize_whatsapp_recipient(Config.whatsapp_recipient)
+        if not recipient:
+            raise MessagingDeliveryError("WHATSAPP_RECIPIENT must contain a valid phone number.")
+
+        version = Config.whatsapp_graph_api_version.lstrip("/") or "v23.0"
+        url = (
+            f"https://graph.facebook.com/{version}/"
+            f"{Config.whatsapp_phone_number_id}/messages"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {Config.whatsapp_access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "messaging_product": "whatsapp",
+                        "to": recipient,
+                        "type": "text",
+                        "text": {
+                            "preview_url": False,
+                            "body": message,
+                        },
+                    },
+                )
+                resp.raise_for_status()
+        except Exception as exc:
+            raise MessagingDeliveryError("WhatsApp send failed.") from exc
+
+        log.debug("WhatsApp message sent to %s", recipient)
         return True
 
 
@@ -443,14 +496,11 @@ class ExpoPushSender:
 
 
 async def send_text_message(message: str, follow_up_link: str | None = None) -> None:
-    """Send a plain outbound text through all configured messaging channels."""
+    """Send a plain outbound text through the configured primary messaging channel."""
     telegram = TelegramMessenger()
     imessage = IMessageSender()
+    whatsapp = WhatsAppMessenger()
     expo = ExpoPushSender()
-
-    configured_channels = 0
-    sent_any = False
-    errors: list[str] = []
 
     async def _send_main_and_link(sender) -> bool:
         delivered = await sender.send(message)
@@ -461,34 +511,35 @@ async def send_text_message(message: str, follow_up_link: str | None = None) -> 
                 log.warning("Follow-up email link delivery failed: %s", exc)
         return delivered
 
-    if Config.telegram_token and Config.telegram_chat_id:
-        configured_channels += 1
-        try:
-            sent_any |= await _send_main_and_link(telegram)
-        except MessagingDeliveryError as exc:
-            errors.append(str(exc))
+    channel_name = (Config.message_channel or "Telegram").strip()
+    selected_sender = {
+        "Telegram": telegram,
+        "iMessage": imessage,
+        "WhatsApp": whatsapp,
+    }.get(channel_name)
 
-    if Config.imessage_enabled:
-        configured_channels += 1
-        try:
-            sent_any |= await _send_main_and_link(imessage)
-        except MessagingDeliveryError as exc:
-            errors.append(str(exc))
-
-    if Config.expo_push_enabled:
-        configured_channels += 1
-        try:
-            sent_any |= await expo.send(message)
-        except MessagingDeliveryError as exc:
-            errors.append(str(exc))
-
-    if configured_channels == 0:
+    if selected_sender is None:
         raise MessagingDeliveryError(
-            "No messaging channel is configured. Configure Telegram or iMessage."
+            f"Unsupported MESSAGE_CHANNEL '{channel_name}'. Choose Telegram, iMessage, or WhatsApp."
         )
 
-    if not sent_any:
-        raise MessagingDeliveryError("; ".join(errors) or "No messaging channel delivered the message.")
+    delivered = False
+    try:
+        delivered = await _send_main_and_link(selected_sender)
+    except MessagingDeliveryError:
+        raise
+
+    if not delivered:
+        raise MessagingDeliveryError(
+            f"{channel_name} is not configured. Update the Messaging settings before sending summaries."
+        )
+
+    # App push can still accompany the text channel, but it should not replace it.
+    if Config.expo_push_enabled:
+        try:
+            await expo.send(message)
+        except MessagingDeliveryError as exc:
+            log.warning("Expo push delivery failed: %s", exc)
 
 
 async def send_summary(
@@ -500,7 +551,7 @@ async def send_summary(
     prep_brief: str | None = None,
 ) -> None:
     """
-    Format and dispatch a summary to all configured messaging channels.
+    Format and dispatch a summary through the selected messaging channel.
 
     Raises:
         MessagingDeliveryError: If no configured channel can deliver the summary.

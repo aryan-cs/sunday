@@ -2,15 +2,24 @@ import React from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
+import { SettingsIcon } from "../components/NavIcons";
 import { FONTS } from "../constants/fonts";
+import {
+  CalendarPreferences,
+  loadCalendarPreferences,
+  saveCalendarPreferences,
+} from "../lib/calendarPreferences";
 import { fetchApi } from "../lib/api";
 
 const BACKGROUND = "#121212";
@@ -19,10 +28,33 @@ const CARD_ALT = "#252525";
 const MUTED = "#8b8b8b";
 const ACCENT = "#ffffff";
 const ONLINE_TAG = "#3a3a3a";
+const PANEL = "#1f1f1f";
+const PANEL_BORDER = "#2b2b2b";
+const TOGGLE_OFF = "#1a1a1a";
+const TOGGLE_ON = "#5f5f5f";
 const REFRESH_INTERVAL_MS = 60_000;
+const CALENDAR_COLOR_FALLBACKS = [
+  "#ffffff",
+  "#7ec8ff",
+  "#8af0c1",
+  "#fbbf24",
+  "#f87171",
+  "#c084fc",
+  "#fb7185",
+  "#60a5fa",
+] as const;
+
+type CalendarDescriptor = {
+  id: string;
+  name: string;
+  default_color: string | null;
+};
 
 type CalendarEvent = {
   id: string;
+  calendar_id: string;
+  calendar_name: string;
+  calendar_default_color: string | null;
   title: string;
   location: string | null;
   start_iso: string;
@@ -31,8 +63,26 @@ type CalendarEvent = {
   travel_mode: string;
   leave_by_iso: string | null;
   is_online: boolean;
+  is_all_day: boolean;
   meeting_link: string | null;
+  description: string | null;
+  attendees: Array<{
+    name: string;
+    email: string | null;
+    response_status: string | null;
+  }>;
+  notes: string | null;
   travel: Record<string, { minutes: number; text: string } | null> | null;
+};
+
+type EventsResponse = {
+  events?: CalendarEvent[];
+  calendars?: CalendarDescriptor[];
+};
+
+const DEFAULT_CALENDAR_PREFERENCES: CalendarPreferences = {
+  hiddenCalendarIds: [],
+  colorsById: {},
 };
 
 function LocationPinIcon({ size = 16, color = MUTED }: { size?: number; color?: string }) {
@@ -57,13 +107,73 @@ function VideoCamIcon({ size = 16, color = MUTED }: { size?: number; color?: str
   );
 }
 
-function formatEventTime(isoString: string) {
-  const date = new Date(isoString);
+function normalizeHexColor(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
+
+function parseCalendarDate(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const allDayMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (allDayMatch) {
+    const year = Number.parseInt(allDayMatch[1], 10);
+    const month = Number.parseInt(allDayMatch[2], 10);
+    const day = Number.parseInt(allDayMatch[3], 10);
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatClockLabel(value: string) {
+  const date = parseCalendarDate(value);
+  if (!date) {
+    return "TBD";
+  }
+
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function formatDayLabel(value: string) {
+  const date = parseCalendarDate(value);
+  if (!date) {
+    return "";
+  }
+
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatEventDateLabel(value: string) {
+  const date = parseCalendarDate(value);
+  if (!date) {
+    return "";
+  }
+
+  return date.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function formatLeaveBy(isoString: string) {
-  const date = new Date(isoString);
+  const date = parseCalendarDate(isoString);
+  if (!date) {
+    return "";
+  }
+
   const now = new Date();
   const diffMs = date.getTime() - now.getTime();
   const diffMins = Math.round(diffMs / 60_000);
@@ -74,65 +184,100 @@ function formatLeaveBy(isoString: string) {
   return `Leave at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
-function isEventSoon(startIso: string) {
-  const diffMs = new Date(startIso).getTime() - Date.now();
-  return diffMs > 0 && diffMs <= 60 * 60_000; // within 1 hour
+function isEventSoon(event: CalendarEvent) {
+  if (event.is_all_day) {
+    return false;
+  }
+  const start = parseCalendarDate(event.start_iso);
+  if (!start) {
+    return false;
+  }
+  const diffMs = start.getTime() - Date.now();
+  return diffMs > 0 && diffMs <= 60 * 60_000;
 }
 
-function isEventNow(startIso: string, endIso: string) {
+function isEventNow(event: CalendarEvent) {
+  if (event.is_all_day) {
+    return false;
+  }
+  const start = parseCalendarDate(event.start_iso);
+  const end = parseCalendarDate(event.end_iso);
+  if (!start || !end) {
+    return false;
+  }
+
   const now = Date.now();
-  return new Date(startIso).getTime() <= now && new Date(endIso).getTime() > now;
+  return start.getTime() <= now && end.getTime() > now;
 }
 
-function EventCard({ event }: { event: CalendarEvent }) {
-  const soon = isEventSoon(event.start_iso);
-  const now = isEventNow(event.start_iso, event.end_iso);
-  const travelMode = event.travel_mode || "driving";
-  const travelInfo = event.travel?.[ travelMode ];
+function getPrimaryTimeLabel(event: CalendarEvent) {
+  return event.is_all_day ? "All day" : formatClockLabel(event.start_iso);
+}
+
+function getSecondaryTimeLabel(event: CalendarEvent) {
+  return event.is_all_day ? formatDayLabel(event.start_iso) : formatClockLabel(event.end_iso);
+}
+
+function EventCard({
+  event,
+  calendarColor,
+  onPress,
+}: {
+  event: CalendarEvent;
+  calendarColor: string;
+  onPress: () => void;
+}) {
+  const primaryTime = getPrimaryTimeLabel(event);
+  const secondaryTime = getSecondaryTimeLabel(event);
+  const now = isEventNow(event);
+  const detailLabel = event.is_online ? "Online" : event.location?.trim() || "";
 
   return (
-    <View style={[styles.card, now && styles.cardNow]}>
-      <View style={styles.cardHeader}>
-        <View style={styles.timeColumn}>
-          <Text style={[styles.timeText, (soon || now) && styles.timeTextHighlight]}>
-            {formatEventTime(event.start_iso)}
-          </Text>
-          <Text style={styles.timeDash}>–</Text>
-          <Text style={styles.timeTextEnd}>{formatEventTime(event.end_iso)}</Text>
-        </View>
-        <View style={styles.cardBody}>
-          <Text numberOfLines={2} style={styles.eventTitle}>{event.title}</Text>
+    <Pressable onPress={onPress} style={[styles.card, now && styles.cardNow]}>
+      <View style={[styles.calendarRail, { backgroundColor: calendarColor }]} />
 
-          {event.is_online ? (
-            <View style={styles.tagRow}>
-              <View style={styles.onlineTag}>
-                <VideoCamIcon size={13} color={MUTED} />
-                <Text style={styles.tagText}>Online</Text>
-              </View>
-            </View>
-          ) : event.location ? (
+      <View style={styles.cardRow}>
+        <View style={styles.cardBody}>
+          <Text numberOfLines={2} style={styles.eventTitle}>
+            {event.title}
+          </Text>
+
+          {detailLabel ? (
             <View style={styles.locationRow}>
-              <LocationPinIcon size={14} />
-              <Text numberOfLines={1} style={styles.locationText}>{event.location}</Text>
+              {event.is_online ? (
+                <VideoCamIcon size={14} color={MUTED} />
+              ) : (
+                <LocationPinIcon size={14} />
+              )}
+              <Text numberOfLines={1} style={styles.locationText}>
+                {detailLabel}
+              </Text>
             </View>
+          ) : null}
+        </View>
+
+        <View style={styles.timeColumn}>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.82}
+            style={[styles.timeText, now && styles.timeTextHighlight]}
+          >
+            {primaryTime}
+          </Text>
+          {secondaryTime ? (
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.86}
+              style={styles.timeTextEnd}
+            >
+              {secondaryTime}
+            </Text>
           ) : null}
         </View>
       </View>
-
-      {/* Travel / leave-by info */}
-      {!event.is_online && (event.leave_by_iso || travelInfo) ? (
-        <View style={styles.travelRow}>
-          {event.leave_by_iso ? (
-            <Text style={[styles.leaveByText, soon && styles.leaveByTextUrgent]}>
-              {formatLeaveBy(event.leave_by_iso)}
-            </Text>
-          ) : null}
-          {travelInfo ? (
-            <Text style={styles.travelText}>{travelInfo.text}</Text>
-          ) : null}
-        </View>
-      ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -140,22 +285,33 @@ export function TodayScreen() {
   const insets = useSafeAreaInsets();
   const headerTopInset = insets.top + 8;
   const [events, setEvents] = React.useState<CalendarEvent[]>([]);
+  const [calendars, setCalendars] = React.useState<CalendarDescriptor[]>([]);
+  const [preferences, setPreferences] = React.useState<CalendarPreferences>(
+    DEFAULT_CALENDAR_PREFERENCES,
+  );
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [isCalendarSettingsVisible, setIsCalendarSettingsVisible] = React.useState(false);
+  const [selectedEvent, setSelectedEvent] = React.useState<CalendarEvent | null>(null);
 
   const loadEvents = React.useCallback(async () => {
     try {
-      const response = await fetchApi("/api/events", {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      }, { timeoutMs: 15_000 });
+      const response = await fetchApi(
+        "/api/events",
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        },
+        { timeoutMs: 15_000 },
+      );
 
       if (!response.ok) {
         throw new Error(`Server error (${response.status})`);
       }
 
-      const data = await response.json();
-      setEvents(data.events ?? []);
+      const data = (await response.json()) as EventsResponse;
+      setEvents(Array.isArray(data.events) ? data.events : []);
+      setCalendars(Array.isArray(data.calendars) ? data.calendars : []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load events");
@@ -170,6 +326,80 @@ export function TodayScreen() {
     return () => clearInterval(interval);
   }, [loadEvents]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const storedPreferences = await loadCalendarPreferences();
+      if (!cancelled) {
+        setPreferences(storedPreferences);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistPreferences = React.useCallback(async (nextPreferences: CalendarPreferences) => {
+    setPreferences(nextPreferences);
+    await saveCalendarPreferences(nextPreferences);
+  }, []);
+
+  const handleCalendarVisibilityToggle = React.useCallback(
+    (calendarId: string, enabled: boolean) => {
+      const nextHiddenIds = enabled
+        ? preferences.hiddenCalendarIds.filter((id) => id !== calendarId)
+        : [...new Set([...preferences.hiddenCalendarIds, calendarId])];
+
+      void persistPreferences({
+        ...preferences,
+        hiddenCalendarIds: nextHiddenIds,
+      });
+    },
+    [persistPreferences, preferences],
+  );
+
+  const handleCalendarColorChange = React.useCallback(
+    (calendarId: string, color: string) => {
+      void persistPreferences({
+        ...preferences,
+        colorsById: {
+          ...preferences.colorsById,
+          [calendarId]: color,
+        },
+      });
+    },
+    [persistPreferences, preferences],
+  );
+
+  const calendarColorLookup = React.useMemo(() => {
+    const lookup: Record<string, string> = {};
+
+    calendars.forEach((calendar, index) => {
+      const fallbackColor =
+        normalizeHexColor(calendar.default_color) ??
+        CALENDAR_COLOR_FALLBACKS[index % CALENDAR_COLOR_FALLBACKS.length];
+      lookup[calendar.id] = preferences.colorsById[calendar.id] || fallbackColor;
+    });
+
+    return lookup;
+  }, [calendars, preferences.colorsById]);
+
+  const filteredEvents = React.useMemo(() => {
+    const hidden = new Set(preferences.hiddenCalendarIds);
+    return events.filter((event) => !hidden.has(event.calendar_id));
+  }, [events, preferences.hiddenCalendarIds]);
+
+  const selectedEventTravel = React.useMemo(() => {
+    if (!selectedEvent) {
+      return null;
+    }
+
+    const travelMode = selectedEvent.travel_mode || "driving";
+    return selectedEvent.travel?.[travelMode] ?? null;
+  }, [selectedEvent]);
+
   const now = new Date();
   const greeting =
     now.getHours() < 12 ? "Good morning" : now.getHours() < 17 ? "Good afternoon" : "Good evening";
@@ -178,9 +408,9 @@ export function TodayScreen() {
     <SafeAreaView edges={[]} style={styles.safe}>
       <StatusBar barStyle="light-content" />
       <FlatList
-        data={events}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={events.length ? styles.listContent : styles.emptyContent}
+        data={filteredEvents}
+        keyExtractor={(item) => `${item.calendar_id}:${item.id}`}
+        contentContainerStyle={filteredEvents.length ? styles.listContent : styles.emptyContent}
         showsVerticalScrollIndicator={false}
         bounces
         alwaysBounceVertical
@@ -188,7 +418,15 @@ export function TodayScreen() {
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListHeaderComponent={
           <View style={[styles.header, { paddingTop: headerTopInset }]}>
-            <Text style={styles.title}>Today</Text>
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>Today</Text>
+              <Pressable
+                onPress={() => setIsCalendarSettingsVisible(true)}
+                style={styles.headerButton}
+              >
+                <SettingsIcon size={20} color="#e3e3e3" />
+              </Pressable>
+            </View>
             <Text style={styles.greeting}>{greeting}</Text>
           </View>
         }
@@ -201,7 +439,13 @@ export function TodayScreen() {
           ) : error ? (
             <View style={styles.centerState}>
               <Text style={styles.stateText}>{error}</Text>
-              <Pressable onPress={() => { setIsLoading(true); void loadEvents(); }} style={styles.retryButton}>
+              <Pressable
+                onPress={() => {
+                  setIsLoading(true);
+                  void loadEvents();
+                }}
+                style={styles.retryButton}
+              >
                 <Text style={styles.retryText}>Retry</Text>
               </Pressable>
             </View>
@@ -212,8 +456,203 @@ export function TodayScreen() {
             </View>
           )
         }
-        renderItem={({ item }) => <EventCard event={item} />}
+        renderItem={({ item }) => (
+          <EventCard
+            event={item}
+            calendarColor={calendarColorLookup[item.calendar_id] || ACCENT}
+            onPress={() => setSelectedEvent(item)}
+          />
+        )}
       />
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isCalendarSettingsVisible}
+        onRequestClose={() => setIsCalendarSettingsVisible(false)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => setIsCalendarSettingsVisible(false)}
+          />
+          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 18) + 8 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Calendars</Text>
+              <Pressable
+                onPress={() => setIsCalendarSettingsVisible(false)}
+                style={styles.modalDoneButton}
+              >
+                <Text style={styles.modalDoneText}>Done</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              bounces
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalContent}
+            >
+              {calendars.map((calendar, index) => {
+                const selectedColor =
+                  calendarColorLookup[calendar.id] ||
+                  CALENDAR_COLOR_FALLBACKS[index % CALENDAR_COLOR_FALLBACKS.length];
+                const defaultColor =
+                  normalizeHexColor(calendar.default_color) ||
+                  CALENDAR_COLOR_FALLBACKS[index % CALENDAR_COLOR_FALLBACKS.length];
+                const enabled = !preferences.hiddenCalendarIds.includes(calendar.id);
+                const colorOptions = [
+                  defaultColor,
+                  ...CALENDAR_COLOR_FALLBACKS.filter((color) => color !== defaultColor),
+                ].slice(0, 6);
+
+                return (
+                  <View key={calendar.id} style={styles.calendarSettingsRow}>
+                    <View style={styles.calendarSettingsTopRow}>
+                      <Text numberOfLines={1} style={styles.calendarSettingsName}>
+                        {calendar.name}
+                      </Text>
+                      <Switch
+                        value={enabled}
+                        onValueChange={(value) =>
+                          handleCalendarVisibilityToggle(calendar.id, value)
+                        }
+                        ios_backgroundColor={TOGGLE_OFF}
+                        trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
+                        thumbColor={enabled ? "#ffffff" : "#d6d6d6"}
+                      />
+                    </View>
+
+                    <View style={styles.calendarColorOptions}>
+                      {colorOptions.map((color) => {
+                        const selected = color === selectedColor;
+                        return (
+                          <Pressable
+                            key={`${calendar.id}-${color}`}
+                            onPress={() => handleCalendarColorChange(calendar.id, color)}
+                            style={[
+                              styles.calendarColorChip,
+                              selected && styles.calendarColorChipSelected,
+                            ]}
+                          >
+                            <View
+                              style={[
+                                styles.calendarColorChipFill,
+                                { backgroundColor: color },
+                              ]}
+                            />
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={selectedEvent != null}
+        onRequestClose={() => setSelectedEvent(null)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setSelectedEvent(null)} />
+          {selectedEvent ? (
+            <View
+              style={[
+                styles.eventModalSheet,
+                { paddingBottom: Math.max(insets.bottom, 18) + 8 },
+              ]}
+            >
+              <View style={styles.modalHeader}>
+                <Text numberOfLines={2} style={styles.modalTitle}>
+                  {selectedEvent.title}
+                </Text>
+                <Pressable
+                  onPress={() => setSelectedEvent(null)}
+                  style={styles.modalDoneButton}
+                >
+                  <Text style={styles.modalDoneText}>Done</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.eventMetaText}>
+                {selectedEvent.is_all_day
+                  ? `${formatEventDateLabel(selectedEvent.start_iso)} • All day`
+                  : `${formatEventDateLabel(selectedEvent.start_iso)} • ${formatClockLabel(selectedEvent.start_iso)} - ${formatClockLabel(selectedEvent.end_iso)}`}
+              </Text>
+
+              <ScrollView
+                bounces
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.eventModalContent}
+              >
+                {selectedEvent.location ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Location</Text>
+                    <Text style={styles.detailSectionText}>{selectedEvent.location}</Text>
+                  </View>
+                ) : null}
+
+                {selectedEvent.description ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Description</Text>
+                    <Text style={styles.detailSectionText}>{selectedEvent.description}</Text>
+                  </View>
+                ) : null}
+
+                {selectedEventTravel ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Travel</Text>
+                    <Text style={styles.detailSectionText}>
+                      {selectedEventTravel.text}
+                      {selectedEvent.leave_by_iso
+                        ? ` • ${formatLeaveBy(selectedEvent.leave_by_iso)}`
+                        : ""}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {selectedEvent.attendees.length > 0 ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>People</Text>
+                    {selectedEvent.attendees.map((attendee) => (
+                      <Text
+                        key={`${attendee.name}-${attendee.email ?? ""}`}
+                        style={styles.detailSectionText}
+                      >
+                        {attendee.name}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+
+                {selectedEvent.notes ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Notes</Text>
+                    <Text style={styles.detailSectionText}>{selectedEvent.notes}</Text>
+                  </View>
+                ) : null}
+
+                {!selectedEvent.location &&
+                !selectedEvent.description &&
+                !selectedEventTravel &&
+                selectedEvent.attendees.length === 0 &&
+                !selectedEvent.notes ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTextMuted}>
+                      No additional details for this event yet.
+                    </Text>
+                  </View>
+                ) : null}
+              </ScrollView>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -235,6 +674,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 18,
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: CARD,
+  },
   title: {
     color: ACCENT,
     fontSize: 28,
@@ -254,43 +706,51 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: CARD,
     padding: 16,
-    gap: 10,
+    overflow: "hidden",
   },
   cardNow: {
-    borderLeftWidth: 3,
-    borderLeftColor: ACCENT,
+    backgroundColor: CARD_ALT,
   },
-  cardHeader: {
+  calendarRail: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+  },
+  cardRow: {
     flexDirection: "row",
+    alignItems: "flex-start",
     gap: 14,
   },
   timeColumn: {
-    width: 58,
+    width: 78,
     alignItems: "flex-end",
-    paddingTop: 1,
+    justifyContent: "flex-end",
+    alignSelf: "stretch",
+    gap: 2,
   },
   timeText: {
+    width: "100%",
     color: ACCENT,
     fontSize: 15,
+    textAlign: "right",
     fontFamily: FONTS.semibold,
   },
   timeTextHighlight: {
     color: "#ffffff",
   },
-  timeDash: {
-    color: MUTED,
-    fontSize: 12,
-    fontFamily: FONTS.regular,
-    marginVertical: -2,
-  },
   timeTextEnd: {
+    width: "100%",
     color: MUTED,
     fontSize: 13,
+    textAlign: "right",
     fontFamily: FONTS.regular,
   },
   cardBody: {
     flex: 1,
     gap: 6,
+    minHeight: 46,
   },
   eventTitle: {
     color: ACCENT,
@@ -305,46 +765,6 @@ const styles = StyleSheet.create({
   },
   locationText: {
     flex: 1,
-    color: MUTED,
-    fontSize: 13,
-    fontFamily: FONTS.regular,
-  },
-  tagRow: {
-    flexDirection: "row",
-    gap: 6,
-  },
-  onlineTag: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: ONLINE_TAG,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  tagText: {
-    color: MUTED,
-    fontSize: 12,
-    fontFamily: FONTS.medium,
-  },
-  travelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#2a2a2a",
-    marginTop: 2,
-  },
-  leaveByText: {
-    color: "#b8b8b8",
-    fontSize: 13,
-    fontFamily: FONTS.semibold,
-  },
-  leaveByTextUrgent: {
-    color: "#eb4034",
-  },
-  travelText: {
     color: MUTED,
     fontSize: 13,
     fontFamily: FONTS.regular,
@@ -379,5 +799,132 @@ const styles = StyleSheet.create({
     color: ACCENT,
     fontSize: 15,
     fontFamily: FONTS.medium,
+  },
+  modalRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+  },
+  modalSheet: {
+    backgroundColor: PANEL,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderWidth: 1,
+    borderColor: PANEL_BORDER,
+    paddingTop: 18,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+  },
+  modalTitle: {
+    color: ACCENT,
+    fontSize: 22,
+    fontFamily: FONTS.semibold,
+  },
+  modalDoneButton: {
+    minWidth: 72,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 16,
+  },
+  modalDoneText: {
+    color: BACKGROUND,
+    fontSize: 15,
+    fontFamily: FONTS.semibold,
+  },
+  modalContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 8,
+  },
+  eventModalSheet: {
+    backgroundColor: PANEL,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderWidth: 1,
+    borderColor: PANEL_BORDER,
+    paddingTop: 18,
+    maxHeight: "78%",
+  },
+  eventMetaText: {
+    color: MUTED,
+    fontSize: 14,
+    fontFamily: FONTS.regular,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+  },
+  eventModalContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 8,
+    gap: 14,
+  },
+  detailSection: {
+    gap: 6,
+  },
+  detailSectionTitle: {
+    color: ACCENT,
+    fontSize: 15,
+    fontFamily: FONTS.semibold,
+  },
+  detailSectionText: {
+    color: "#c8c8c8",
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: FONTS.regular,
+  },
+  detailSectionTextMuted: {
+    color: MUTED,
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: FONTS.regular,
+  },
+  calendarSettingsRow: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: PANEL_BORDER,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  calendarSettingsTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  calendarSettingsName: {
+    flex: 1,
+    color: ACCENT,
+    fontSize: 16,
+    fontFamily: FONTS.medium,
+  },
+  calendarColorOptions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  calendarColorChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  calendarColorChipSelected: {
+    borderColor: "#ffffff",
+  },
+  calendarColorChipFill: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
   },
 });

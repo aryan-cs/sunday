@@ -2,7 +2,7 @@ import React from "react";
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { FONTS } from "../constants/fonts";
 
-export const COACH_DELAY_MS = 20_000;
+export const COACH_DELAY_MS = 10_000;
 
 type CoachAction = {
   label: string;

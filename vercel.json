@@ -1,1 +1,7 @@
-{}
+{
+  "buildCommand": "cd sunday-app && npm install && npx expo export -p web",
+  "outputDirectory": "sunday-app/dist",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

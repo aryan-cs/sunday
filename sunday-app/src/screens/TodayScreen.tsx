@@ -2,8 +2,12 @@ import React from "react";
 import {
   ActivityIndicator,
   Animated,
+  Easing,
   FlatList,
+  Image,
+  Linking,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StatusBar,
@@ -16,7 +20,6 @@ import {
 import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
-import { SettingsIcon } from "../components/NavIcons";
 import { FONTS } from "../constants/fonts";
 import {
   CalendarPreferences,
@@ -38,7 +41,9 @@ const PANEL_BORDER = "#2b2b2b";
 const TOGGLE_OFF = "#1a1a1a";
 const TOGGLE_ON = "#5f5f5f";
 const REFRESH_INTERVAL_MS = 60_000;
-const DETAIL_SHEET_OVERDRAW = 72;
+const APPLE_MAPS_ICON = require("../../assets/apple-maps-icon.png");
+const GOOGLE_MAPS_ICON = require("../../assets/google-maps-icon.png");
+const WAZE_ICON = require("../../assets/waze-icon.png");
 const CALENDAR_COLOR_FALLBACKS = [
   "#ffffff",
   "#7ec8ff",
@@ -86,6 +91,8 @@ type EventsResponse = {
   calendars?: CalendarDescriptor[];
 };
 
+type MapsProvider = "apple" | "google" | "waze";
+
 const MAP_PREVIEW_DELTA = {
   latitudeDelta: 0.01,
   longitudeDelta: 0.01,
@@ -112,6 +119,17 @@ function VideoCamIcon({ size = 16, color = MUTED }: { size?: number; color?: str
     <Svg width={size} height={size} viewBox="0 -960 960 960" fill="none">
       <Path
         d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h480q33 0 56.5 23.5T720-720v180l160-160v440L720-420v180q0 33-23.5 56.5T640-160H160Z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+function EventListIcon({ size = 20, color = "#e3e3e3" }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 -960 960 960" fill="none">
+      <Path
+        d="M640-120q-33 0-56.5-23.5T560-200v-160q0-33 23.5-56.5T640-440h160q33 0 56.5 23.5T880-360v160q0 33-23.5 56.5T800-120H640Zm0-80h160v-160H640v160ZM80-240v-80h360v80H80Zm560-280q-33 0-56.5-23.5T560-600v-160q0-33 23.5-56.5T640-840h160q33 0 56.5 23.5T880-760v160q0 33-23.5 56.5T800-520H640Zm0-80h160v-160H640v160ZM80-640v-80h360v80H80Zm640 360Zm0-400Z"
         fill={color}
       />
     </Svg>
@@ -193,6 +211,44 @@ function formatLeaveBy(isoString: string) {
   if (diffMins === 0) return "Leave now";
   if (diffMins <= 60) return `Leave in ${diffMins} min`;
   return `Leave at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function buildMapUrls(
+  provider: MapsProvider,
+  destinationLabel: string,
+  destinationCoords?: { latitude: number; longitude: number } | null,
+) {
+  const encodedLabel = encodeURIComponent(destinationLabel.trim());
+  const latLng = destinationCoords
+    ? `${destinationCoords.latitude},${destinationCoords.longitude}`
+    : "";
+
+  if (provider === "apple") {
+    return {
+      primary: latLng
+        ? `http://maps.apple.com/?ll=${latLng}&q=${encodedLabel}`
+        : `http://maps.apple.com/?q=${encodedLabel}`,
+      fallback: null,
+    };
+  }
+
+  if (provider === "google") {
+    const primary = latLng
+      ? `comgooglemaps://?q=${encodedLabel}&center=${latLng}`
+      : `comgooglemaps://?q=${encodedLabel}`;
+    const fallback = latLng
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(latLng)}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodedLabel}`;
+    return { primary, fallback };
+  }
+
+  const primary = latLng
+    ? `waze://?ll=${latLng}&navigate=yes`
+    : `waze://?q=${encodedLabel}&navigate=yes`;
+  const fallback = latLng
+    ? `https://waze.com/ul?ll=${latLng}&navigate=yes`
+    : `https://waze.com/ul?q=${encodedLabel}&navigate=yes`;
+  return { primary, fallback };
 }
 
 function isEventSoon(event: CalendarEvent) {
@@ -314,7 +370,10 @@ export function TodayScreen() {
     {},
   );
   const eventBackdropOpacity = React.useRef(new Animated.Value(0)).current;
-  const eventSheetTranslateY = React.useRef(new Animated.Value(28)).current;
+  const eventSheetHeight = React.useRef(new Animated.Value(0)).current;
+  const eventSheetHeightRef = React.useRef(0);
+  const eventSheetGestureStartRef = React.useRef(0);
+  const eventSheetModeRef = React.useRef<"half" | "full">("half");
 
   const loadEvents = React.useCallback(async () => {
     try {
@@ -412,6 +471,13 @@ export function TodayScreen() {
     const hidden = new Set(preferences.hiddenCalendarIds);
     return events.filter((event) => !hidden.has(event.calendar_id));
   }, [events, preferences.hiddenCalendarIds]);
+  const selectedEventCalendarColor = React.useMemo(() => {
+    if (!selectedEvent) {
+      return ACCENT;
+    }
+
+    return calendarColorLookup[selectedEvent.calendar_id] || ACCENT;
+  }, [calendarColorLookup, selectedEvent]);
 
   const selectedEventTravel = React.useMemo(() => {
     if (!selectedEvent) {
@@ -421,7 +487,53 @@ export function TodayScreen() {
     const travelMode = selectedEvent.travel_mode || "driving";
     return selectedEvent.travel?.[travelMode] ?? null;
   }, [selectedEvent]);
-  const eventSheetHiddenY = Math.max(windowHeight, 420);
+  const selectedEventDestination = React.useMemo(() => {
+    if (!selectedEvent?.location?.trim()) {
+      return null;
+    }
+
+    return {
+      label: selectedEvent.location.trim(),
+      coords: selectedEventMapPreview
+        ? {
+            latitude: selectedEventMapPreview.latitude,
+            longitude: selectedEventMapPreview.longitude,
+          }
+        : null,
+    };
+  }, [selectedEvent, selectedEventMapPreview]);
+  const eventSheetFullHeight = Math.min(windowHeight - Math.max(insets.top + 18, 72), 720);
+  const eventSheetHalfHeight = Math.min(
+    Math.max(360, Math.round(windowHeight * 0.54)),
+    eventSheetFullHeight,
+  );
+
+  React.useEffect(() => {
+    const id = eventSheetHeight.addListener(({ value }) => {
+      eventSheetHeightRef.current = value;
+    });
+
+    return () => {
+      eventSheetHeight.removeListener(id);
+    };
+  }, [eventSheetHeight]);
+
+  const animateEventSheetToMode = React.useCallback(
+    (mode: "half" | "full") => {
+      const toValue = mode === "full" ? eventSheetFullHeight : eventSheetHalfHeight;
+      eventSheetModeRef.current = mode;
+      eventSheetHeight.stopAnimation();
+      Animated.spring(eventSheetHeight, {
+        toValue,
+        damping: 24,
+        stiffness: 260,
+        mass: 0.95,
+        overshootClamping: true,
+        useNativeDriver: false,
+      }).start();
+    },
+    [eventSheetFullHeight, eventSheetHalfHeight, eventSheetHeight],
+  );
 
   const closeSelectedEvent = React.useCallback(() => {
     if (!isEventSheetMounted) {
@@ -430,32 +542,26 @@ export function TodayScreen() {
     }
 
     eventBackdropOpacity.stopAnimation();
-    eventSheetTranslateY.stopAnimation();
+    eventSheetHeight.stopAnimation();
     Animated.parallel([
       Animated.timing(eventBackdropOpacity, {
         toValue: 0,
-        duration: 160,
+        duration: 170,
         useNativeDriver: true,
       }),
-      Animated.sequence([
-        Animated.timing(eventSheetTranslateY, {
-          toValue: -10,
-          duration: 110,
-          useNativeDriver: true,
-        }),
-        Animated.timing(eventSheetTranslateY, {
-          toValue: eventSheetHiddenY,
-          duration: 320,
-          useNativeDriver: true,
-        }),
-      ]),
+      Animated.timing(eventSheetHeight, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
     ]).start(({ finished }) => {
       if (finished) {
         setIsEventSheetMounted(false);
         setSelectedEvent(null);
       }
     });
-  }, [eventBackdropOpacity, eventSheetHiddenY, eventSheetTranslateY, isEventSheetMounted]);
+  }, [eventBackdropOpacity, eventSheetHeight, isEventSheetMounted]);
 
   React.useEffect(() => {
     if (!selectedEvent) {
@@ -463,24 +569,77 @@ export function TodayScreen() {
     }
 
     setIsEventSheetMounted(true);
+    eventSheetModeRef.current = "half";
     eventBackdropOpacity.stopAnimation();
-    eventSheetTranslateY.stopAnimation();
+    eventSheetHeight.stopAnimation();
     eventBackdropOpacity.setValue(0);
-    eventSheetTranslateY.setValue(eventSheetHiddenY);
+    eventSheetHeight.setValue(0);
+    eventSheetHeightRef.current = 0;
     Animated.parallel([
       Animated.timing(eventBackdropOpacity, {
         toValue: 1,
         duration: 180,
         useNativeDriver: true,
       }),
-      Animated.spring(eventSheetTranslateY, {
-        toValue: 0,
-        speed: 11,
-        bounciness: 8,
-        useNativeDriver: true,
+      Animated.spring(eventSheetHeight, {
+        toValue: eventSheetHalfHeight,
+        damping: 24,
+        stiffness: 260,
+        mass: 0.95,
+        overshootClamping: true,
+        useNativeDriver: false,
       }),
     ]).start();
-  }, [eventBackdropOpacity, eventSheetHiddenY, eventSheetTranslateY, selectedEvent]);
+  }, [eventBackdropOpacity, eventSheetHalfHeight, eventSheetHeight, selectedEvent]);
+
+  const eventSheetPanResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dy) > 6 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+        onPanResponderGrant: () => {
+          eventSheetHeight.stopAnimation();
+          eventSheetGestureStartRef.current = eventSheetHeightRef.current;
+        },
+        onPanResponderMove: (_, gestureState) => {
+          const nextValue = Math.min(
+            eventSheetFullHeight,
+            Math.max(eventSheetHalfHeight, eventSheetGestureStartRef.current - gestureState.dy),
+          );
+          eventSheetHeight.setValue(nextValue);
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          const currentValue = Math.min(
+            eventSheetFullHeight,
+            Math.max(eventSheetHalfHeight, eventSheetHeightRef.current),
+          );
+
+          if (gestureState.vy <= -0.2) {
+            animateEventSheetToMode("full");
+            return;
+          }
+
+          if (gestureState.vy >= 0.2) {
+            animateEventSheetToMode("half");
+            return;
+          }
+
+          animateEventSheetToMode(
+            currentValue >= (eventSheetHalfHeight + eventSheetFullHeight) / 2 ? "full" : "half",
+          );
+        },
+        onPanResponderTerminate: (_, gestureState) => {
+          const currentValue = Math.min(
+            eventSheetFullHeight,
+            Math.max(eventSheetHalfHeight, eventSheetGestureStartRef.current - gestureState.dy),
+          );
+          animateEventSheetToMode(
+            currentValue >= (eventSheetHalfHeight + eventSheetFullHeight) / 2 ? "full" : "half",
+          );
+        },
+      }),
+    [animateEventSheetToMode, eventSheetFullHeight, eventSheetHalfHeight, eventSheetHeight],
+  );
 
   React.useEffect(() => {
     const locationQuery = selectedEvent?.location?.trim();
@@ -526,6 +685,29 @@ export function TodayScreen() {
     };
   }, [selectedEvent]);
 
+  const openMapsDestination = React.useCallback(
+    async (provider: MapsProvider) => {
+      if (!selectedEventDestination) {
+        return;
+      }
+
+      const { primary, fallback } = buildMapUrls(
+        provider,
+        selectedEventDestination.label,
+        selectedEventDestination.coords,
+      );
+
+      try {
+        await Linking.openURL(primary);
+      } catch {
+        if (fallback) {
+          await Linking.openURL(fallback);
+        }
+      }
+    },
+    [selectedEventDestination],
+  );
+
   const now = new Date();
   const greeting =
     now.getHours() < 12 ? "Good morning" : now.getHours() < 17 ? "Good afternoon" : "Good evening";
@@ -550,7 +732,7 @@ export function TodayScreen() {
                 onPress={() => setIsCalendarSettingsVisible(true)}
                 style={styles.headerButton}
               >
-                <SettingsIcon size={20} color="#e3e3e3" />
+                <EventListIcon size={20} color="#e3e3e3" />
               </Pressable>
             </View>
             <Text style={styles.greeting}>{greeting}</Text>
@@ -696,22 +878,34 @@ export function TodayScreen() {
                 style={[
                   styles.eventModalSheet,
                   {
-                    paddingBottom: Math.max(insets.bottom, 18) + 8 + DETAIL_SHEET_OVERDRAW,
-                    marginBottom: -DETAIL_SHEET_OVERDRAW,
-                    transform: [{ translateY: eventSheetTranslateY }],
+                    paddingBottom: Math.max(insets.bottom, 18) + 12,
+                    height: eventSheetHeight,
                   },
                 ]}
               >
-                <View style={styles.eventModalHeader}>
-                  <View style={styles.eventModalTitleWrap}>
-                    <Text numberOfLines={3} style={styles.eventModalTitle}>
-                      {selectedEvent.title}
-                    </Text>
-                    <Text style={styles.eventMetaText}>
-                      {selectedEvent.is_all_day
-                        ? `${formatEventDateLabel(selectedEvent.start_iso)} • All day`
-                        : `${formatEventDateLabel(selectedEvent.start_iso)} • ${formatClockLabel(selectedEvent.start_iso)} - ${formatClockLabel(selectedEvent.end_iso)}`}
-                    </Text>
+                <View {...eventSheetPanResponder.panHandlers} style={styles.eventModalDragArea}>
+                  <View style={styles.eventModalHandleArea}>
+                    <View style={styles.eventModalGrabber} />
+                  </View>
+                  <View style={styles.eventModalHeader}>
+                    <View style={styles.eventModalTitleRow}>
+                      <View style={styles.eventModalTitleWrap}>
+                        <Text numberOfLines={3} style={styles.eventModalTitle}>
+                          {selectedEvent.title}
+                        </Text>
+                        <Text style={styles.eventMetaText}>
+                          {selectedEvent.is_all_day
+                            ? `${formatEventDateLabel(selectedEvent.start_iso)} • All day`
+                            : `${formatEventDateLabel(selectedEvent.start_iso)} • ${formatClockLabel(selectedEvent.start_iso)} - ${formatClockLabel(selectedEvent.end_iso)}`}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.eventModalCalendarChip,
+                          { backgroundColor: selectedEventCalendarColor },
+                        ]}
+                      />
+                    </View>
                   </View>
                 </View>
 
@@ -719,7 +913,10 @@ export function TodayScreen() {
                   <ScrollView
                     bounces
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.eventModalContent}
+                    contentContainerStyle={[
+                      styles.eventModalContent,
+                      { paddingBottom: Math.max(insets.bottom, 18) + 28 },
+                    ]}
                   >
                     {selectedEvent.description ? (
                       <View style={styles.detailSection}>
@@ -759,10 +956,74 @@ export function TodayScreen() {
                                 }}
                               />
                             </MapView>
+                            <View style={styles.locationActionOverlay}>
+                              <Pressable
+                                onPress={() => void openMapsDestination("apple")}
+                                style={styles.locationActionButton}
+                              >
+                                <Image
+                                  source={APPLE_MAPS_ICON}
+                                  style={styles.locationActionIcon}
+                                  resizeMode="contain"
+                                />
+                              </Pressable>
+                              <Pressable
+                                onPress={() => void openMapsDestination("google")}
+                                style={styles.locationActionButton}
+                              >
+                                <Image
+                                  source={GOOGLE_MAPS_ICON}
+                                  style={styles.locationActionIcon}
+                                  resizeMode="contain"
+                                />
+                              </Pressable>
+                              <Pressable
+                                onPress={() => void openMapsDestination("waze")}
+                                style={styles.locationActionButton}
+                              >
+                                <Image
+                                  source={WAZE_ICON}
+                                  style={styles.locationActionIcon}
+                                  resizeMode="contain"
+                                />
+                              </Pressable>
+                            </View>
                           </View>
                         ) : isResolvingSelectedEventMapPreview ? (
                           <View style={styles.locationPreviewLoading}>
                             <ActivityIndicator color={ACCENT} />
+                            <View style={styles.locationActionOverlay}>
+                              <Pressable
+                                onPress={() => void openMapsDestination("apple")}
+                                style={styles.locationActionButton}
+                              >
+                                <Image
+                                  source={APPLE_MAPS_ICON}
+                                  style={styles.locationActionIcon}
+                                  resizeMode="contain"
+                                />
+                              </Pressable>
+                              <Pressable
+                                onPress={() => void openMapsDestination("google")}
+                                style={styles.locationActionButton}
+                              >
+                                <Image
+                                  source={GOOGLE_MAPS_ICON}
+                                  style={styles.locationActionIcon}
+                                  resizeMode="contain"
+                                />
+                              </Pressable>
+                              <Pressable
+                                onPress={() => void openMapsDestination("waze")}
+                                style={styles.locationActionButton}
+                              >
+                                <Image
+                                  source={WAZE_ICON}
+                                  style={styles.locationActionIcon}
+                                  resizeMode="contain"
+                                />
+                              </Pressable>
+                            </View>
                           </View>
                         ) : null}
                       </View>
@@ -1027,22 +1288,47 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL,
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
-    paddingTop: 18,
-    maxHeight: "78%",
     overflow: "hidden",
+  },
+  eventModalDragArea: {
+    paddingTop: 4,
+  },
+  eventModalHandleArea: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  eventModalGrabber: {
+    width: 42,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#555555",
   },
   eventModalHeader: {
     alignItems: "flex-start",
     paddingHorizontal: 18,
     paddingBottom: 14,
   },
+  eventModalTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
   eventModalTitleWrap: {
+    flex: 1,
     gap: 8,
   },
   eventModalTitle: {
     color: ACCENT,
     fontSize: 22,
     fontFamily: FONTS.semibold,
+  },
+  eventModalCalendarChip: {
+    width: 20,
+    height: 20,
+    borderRadius: 7,
+    marginTop: 3,
   },
   eventMetaText: {
     color: MUTED,
@@ -1056,7 +1342,6 @@ const styles = StyleSheet.create({
   eventModalContent: {
     paddingHorizontal: 18,
     paddingTop: 10,
-    paddingBottom: 20,
     gap: 14,
   },
   eventModalFade: {
@@ -1103,6 +1388,30 @@ const styles = StyleSheet.create({
     backgroundColor: CARD_ALT,
     alignItems: "center",
     justifyContent: "center",
+  },
+  locationActionOverlay: {
+    position: "absolute",
+    bottom: 10,
+    right: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  locationActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(31, 31, 31, 0.94)",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  locationActionIcon: {
+    width: 22,
+    height: 22,
   },
   detailSectionTextMuted: {
     color: MUTED,

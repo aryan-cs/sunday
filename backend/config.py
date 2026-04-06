@@ -23,8 +23,9 @@ def _resolve_project_path(value: str) -> str:
     return str(PROJECT_ROOT / path)
 
 
-# Load the ONE config file from the project root
-load_dotenv(PROJECT_ROOT / "config.env")
+# Load the ONE config file from the project root.
+# `override=True` ensures stale shell exports do not beat the repo's config.env.
+load_dotenv(PROJECT_ROOT / "config.env", override=True)
 
 
 def _get_optional_float(name: str) -> float | None:

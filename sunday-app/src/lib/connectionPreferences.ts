@@ -34,14 +34,19 @@ export async function getConnectionPreferences(): Promise<ConnectionPreferences>
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<ConnectionPreferences>;
+    const parsed = JSON.parse(raw) as Partial<ConnectionPreferences> & {
+      backendTarget?: string;
+    };
+    const rawBackendTarget = typeof parsed.backendTarget === "string"
+      ? parsed.backendTarget.trim()
+      : "";
     return {
       connectedAgent:
         typeof parsed.connectedAgent === "string" && parsed.connectedAgent.trim()
           ? parsed.connectedAgent
           : DEFAULT_CONNECTION_PREFERENCES.connectedAgent,
       backendTarget:
-        parsed.backendTarget === "Hosted" || parsed.backendTarget === "Vercel"
+        rawBackendTarget === "Hosted" || rawBackendTarget === "Vercel"
           ? "Hosted"
           : DEFAULT_CONNECTION_PREFERENCES.backendTarget,
       vercelBaseUrl: normalizeHostedBackendUrl(parsed.vercelBaseUrl),

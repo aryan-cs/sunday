@@ -38,6 +38,7 @@ import {
   getPhoneLocationPermissionState,
   getPhoneLocationEnabledPreference,
   requestPhoneLocationAccess,
+  reverseGeocodePhoneLocation,
   setPhoneLocationEnabledPreference,
 } from "../lib/phoneLocationPreference";
 import {
@@ -881,6 +882,13 @@ function parseCoordinate(rawValue: string | boolean | undefined) {
   return parsed;
 }
 
+function isCoordinateOnlyLabel(value: string | null | undefined) {
+  if (!value) {
+    return false;
+  }
+  return /^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(value.trim());
+}
+
 function defaultPickerCoordinate(settings: AppSettingsValues) {
   for (const group of LOCATION_SETTING_GROUPS) {
     const latitude = parseCoordinate(settings[group.latitudeKey]);
@@ -1087,6 +1095,29 @@ export function SettingsScreen() {
     }
   }, []);
 
+  const resolvePhoneLocationLabel = React.useCallback(async (latitude: number, longitude: number) => {
+    const coordinateFallback = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+    let backendLabel: string | null = null;
+
+    try {
+      const result = await reverseGeocodeLocation(latitude, longitude);
+      const nextLabel = result.label?.trim() || null;
+      if (nextLabel && !isCoordinateOnlyLabel(nextLabel)) {
+        return nextLabel;
+      }
+      backendLabel = nextLabel;
+    } catch {
+      backendLabel = null;
+    }
+
+    const deviceLabel = await reverseGeocodePhoneLocation(latitude, longitude);
+    if (deviceLabel) {
+      return deviceLabel;
+    }
+
+    return backendLabel || coordinateFallback;
+  }, []);
+
   const animateInlineStateChange = React.useCallback(() => {
     LayoutAnimation.configureNext({
       duration: 180,
@@ -1209,15 +1240,12 @@ export function SettingsScreen() {
             try {
               const position = await getCurrentPositionAsync({ accuracy: 4 });
               if (!cancelled) {
-                const result = await reverseGeocodeLocation(
+                const label = await resolvePhoneLocationLabel(
                   position.coords.latitude,
                   position.coords.longitude,
                 );
                 if (!cancelled) {
-                  setPhoneLocationLabel(
-                    result.label ||
-                      `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`,
-                  );
+                  setPhoneLocationLabel(label);
                 }
               }
             } catch {
@@ -1238,7 +1266,7 @@ export function SettingsScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [resolvePhoneLocationLabel]);
 
   React.useEffect(() => {
     return () => {
@@ -1540,14 +1568,13 @@ export function SettingsScreen() {
         setIsPhoneLocationEnabled(true);
         await setPhoneLocationEnabledPreference(true);
 
-        // Fetch current position and reverse geocode
         try {
           const position = await getCurrentPositionAsync({ accuracy: 4 });
-          const result = await reverseGeocodeLocation(
+          const label = await resolvePhoneLocationLabel(
             position.coords.latitude,
             position.coords.longitude,
           );
-          setPhoneLocationLabel(result.label || `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`);
+          setPhoneLocationLabel(label);
         } catch {
           setPhoneLocationLabel("Location detected");
         }
@@ -1567,7 +1594,7 @@ export function SettingsScreen() {
         error instanceof Error ? error.message : "Failed to request location access.",
       );
     }
-  }, []);
+  }, [resolvePhoneLocationLabel]);
 
   const handleWorkDayToggle = React.useCallback((day: (typeof WORKDAY_OPTIONS)[number]["value"]) => {
     applySettingsPatch((current) => {

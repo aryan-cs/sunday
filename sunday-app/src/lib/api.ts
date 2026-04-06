@@ -11,6 +11,23 @@ const FALLBACK_API_BASE_URLS = (process.env.EXPO_PUBLIC_API_FALLBACK_URLS ?? "")
 let resolvedApiBaseUrl: string | null = null;
 let announcedApiBaseUrl: string | null = null;
 
+function isBackendPath(path: string) {
+  return path === "/health" || path.startsWith("/api/") || path.startsWith("/auth/");
+}
+
+function shouldRetryUnexpectedResponse(path: string, response: Response) {
+  if (!isBackendPath(path)) {
+    return false;
+  }
+
+  if ([404, 405, 501].includes(response.status)) {
+    return true;
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return contentType.includes("text/html");
+}
+
 function normalizeBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, "");
 }
@@ -96,6 +113,7 @@ export async function fetchApi(
   const method = (init.method ?? "GET").toUpperCase();
   const attemptedBaseUrls: string[] = [];
   let lastError: unknown = null;
+  let lastUnexpectedResponse: Response | null = null;
   const candidates = buildApiBaseUrlCandidates(preferredBaseUrl);
 
   if (!candidates.length) {
@@ -109,6 +127,18 @@ export async function fetchApi(
     try {
       console.log(`[sunday] ${method} ${path} via ${baseUrl}`);
       const response = await fetchWithOptionalTimeout(`${baseUrl}${path}`, init, options.timeoutMs);
+
+      if (shouldRetryUnexpectedResponse(path, response)) {
+        lastUnexpectedResponse = response;
+        console.warn(
+          `[sunday] ${method} ${path} received ${response.status} (${response.headers.get("content-type") ?? "unknown content type"}) via ${baseUrl}; trying next backend candidate`,
+        );
+        if (resolvedApiBaseUrl === baseUrl) {
+          clearResolvedApiBaseUrl();
+        }
+        continue;
+      }
+
       resolvedApiBaseUrl = baseUrl;
       announceResolvedApiBaseUrl(baseUrl);
       console.log(
@@ -137,5 +167,12 @@ export async function fetchApi(
     }
     throw new Error(`Could not reach the Sunday backend. ${lastError.message}`);
   }
+
+  if (lastUnexpectedResponse) {
+    throw new Error(
+      "The selected hosted URL looks like the Sunday web app, not the backend API. Use your Railway backend URL here.",
+    );
+  }
+
   throw new Error("Could not reach the Sunday backend.");
 }

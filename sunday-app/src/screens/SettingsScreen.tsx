@@ -2488,7 +2488,7 @@ export function SettingsScreen() {
                 <View style={styles.fieldRow}>
                   <View style={styles.fieldRowMain}>
                     <View style={styles.fieldHeader}>
-                      <Text numberOfLines={1} style={styles.fieldLabel}>Vercel URL</Text>
+                      <Text numberOfLines={1} style={styles.fieldLabel}>Hosted backend URL</Text>
                     </View>
                     <TextInput
                       autoCapitalize="none"
@@ -2498,7 +2498,7 @@ export function SettingsScreen() {
                       onBlur={handleVercelBaseUrlBlur}
                       onChangeText={handleVercelBaseUrlChange}
                       onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                      placeholder="https://your-app.vercel.app"
+                      placeholder="https://your-backend.railway.app"
                       placeholderTextColor="#6f6f6f"
                       style={styles.input}
                       value={vercelBaseUrl}

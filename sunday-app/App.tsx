@@ -5,7 +5,6 @@ import {
   Dimensions,
   Keyboard,
   LayoutAnimation,
-  PanResponder,
   Pressable,
   Platform,
   ScrollView,
@@ -13,7 +12,7 @@ import {
   UIManager,
   View,
 } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
@@ -126,26 +125,30 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
 
-  // Keep a ref in sync so the PanResponder (created once) can read the latest value
+  // Keep a ref in sync so the gesture handler (created once) can read the latest value
   React.useEffect(() => {
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
 
-  const swipePanResponder = React.useRef(
-    PanResponder.create({
-      // Claim horizontal swipes in the capture phase before nested ScrollViews can
-      onMoveShouldSetPanResponderCapture: (_, { dx, dy }) =>
-        Math.abs(dx) > Math.abs(dy) * 2 && Math.abs(dx) > 12,
-      onPanResponderRelease: (_, { dx }) => {
-        if (Math.abs(dx) < 50) return;
-        const next =
-          dx < 0
-            ? Math.min(activeIndexRef.current + 1, TABS.length - 1)
-            : Math.max(activeIndexRef.current - 1, 0);
-        scrollRef.current?.scrollTo({ x: next * SCREEN_WIDTH, animated: true });
-      },
-    }),
-  ).current;
+  // Pan gesture that activates only for clear horizontal swipes.
+  // failOffsetY ensures vertical scrolling in inner screens is never blocked.
+  // activeOffsetX ensures taps on the record dot are never stolen.
+  const swipeGesture = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-25, 25])
+        .failOffsetY([-10, 10])
+        .runOnJS(true)
+        .onEnd((e) => {
+          if (Math.abs(e.translationX) < 50) return;
+          const next =
+            e.translationX < 0
+              ? Math.min(activeIndexRef.current + 1, TABS.length - 1)
+              : Math.max(activeIndexRef.current - 1, 0);
+          scrollRef.current?.scrollTo({ x: next * SCREEN_WIDTH, animated: true });
+        }),
+    [],
+  );
   const [isRecordingActive, setIsRecordingActive] = React.useState(false);
   const [alertEntries, setAlertEntries] = React.useState<AlertEntry[]>([]);
   const [entriesHydrated, setEntriesHydrated] = React.useState(false);
@@ -447,7 +450,8 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
   );
 
   return (
-    <View style={styles.root} {...swipePanResponder.panHandlers}>
+    <GestureDetector gesture={swipeGesture}>
+    <View style={styles.root}>
       {/* Screens */}
       <ScrollView
         ref={scrollRef}
@@ -557,6 +561,7 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
         </View>
       </Animated.View>
     </View>
+    </GestureDetector>
   );
 }
 

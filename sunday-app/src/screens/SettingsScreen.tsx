@@ -125,7 +125,7 @@ const CONNECTED_AGENT_OPTIONS = [
 const MESSAGE_CHANNEL_OPTIONS = ["iMessage", "Telegram", "WhatsApp"] as const;
 const BACKEND_OPTIONS = ["Self-hosted", "Hosted"] as const;
 const DEFAULT_HOSTED_BACKEND_URL = "https://sundayramp-production.up.railway.app";
-const DEFAULT_BACKEND_TARGET = Platform.OS === "web" ? "Hosted" : "Self-hosted";
+const DEFAULT_BACKEND_TARGET = "Hosted";
 const RECOMMENDED_TRANSCRIPTION_MODEL = "ggml-small.en-q5_1";
 const RECOMMENDED_SUMMARIZATION_MODEL = "qwen2.5-0.5b-instruct";
 const LLM_PROVIDER_OPTIONS = [

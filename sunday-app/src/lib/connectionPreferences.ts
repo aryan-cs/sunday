@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 
 const CONNECTION_PREFERENCES_KEY = "sunday.connection.preferences";
 const DEFAULT_HOSTED_BACKEND_URL = "https://sundayramp-production.up.railway.app";
-const DEFAULT_BACKEND_TARGET: BackendTarget = Platform.OS === "web" ? "Hosted" : "Self-hosted";
+const DEFAULT_BACKEND_TARGET: BackendTarget = "Hosted";
 
 function normalizeHostedBackendUrl(value: string | undefined) {
   const trimmed = typeof value === "string" ? value.trim() : "";

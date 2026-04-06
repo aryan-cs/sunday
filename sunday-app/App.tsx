@@ -551,11 +551,17 @@ export default function App() {
   const [seedEntries, setSeedEntries] = React.useState<AlertEntry[]>([]);
 
   React.useEffect(() => {
-    getAuthState().then((state) => {
-      setAuthed(!!state);
-      setIsDemo(state?.isDemo ?? false);
-      setAuthChecked(true);
-    });
+    getAuthState()
+      .then((state) => {
+        setAuthed(!!state);
+        setIsDemo(state?.isDemo ?? false);
+      })
+      .catch(() => {
+        // Auth check failed — show login screen
+      })
+      .finally(() => {
+        setAuthChecked(true);
+      });
   }, []);
 
   const handleAuth = React.useCallback(
@@ -570,7 +576,7 @@ export default function App() {
     [],
   );
 
-  if (!fontsLoaded || !authChecked) {
+  if (!authChecked) {
     return null;
   }
 

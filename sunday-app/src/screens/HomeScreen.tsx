@@ -17,7 +17,7 @@ import { uploadRecordingForTranscription, uploadBlobForTranscription } from "../
 const BACKGROUND = "#121212";
 const DOT_SIZE = Platform.OS === "web" ? 200 : 180;
 const RECORDING = "#eb4034";
-const MIN_RECORDING_DURATION_MILLIS = 1000;
+const MIN_RECORDING_DURATION_MILLIS = 150;
 const TOO_SHORT_RECORDING_MESSAGE = "Recording was too short. Hold the button a little longer and try again.";
 
 type HomeScreenProps = {

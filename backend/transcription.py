@@ -29,6 +29,16 @@ def _friendly_transcription_error(detail: str) -> str:
     return message
 
 
+def _looks_like_short_audio_error(detail: str) -> bool:
+    lowered = detail.lower()
+    return (
+        "file is empty" in lowered
+        or "audio file is too short" in lowered
+        or "too short" in lowered
+        or "minimum audio length" in lowered
+    )
+
+
 # ── Groq Whisper API (cloud, no model file needed) ────────────────────────────
 
 def _transcribe_via_groq(source: Path) -> str:
@@ -128,6 +138,13 @@ def _transcribe_locally(source: Path) -> str:
         return text
 
 
+def _transcribe_via_groq_wav_retry(source: Path) -> str:
+    with tempfile.TemporaryDirectory(prefix="sunday-groq-wav-") as tmp:
+        wav_path = Path(tmp) / "recording.wav"
+        _ffmpeg_to_wav(source, wav_path)
+        return _transcribe_via_groq(wav_path)
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def transcribe_audio_file(source: str | Path) -> str:
@@ -143,6 +160,15 @@ def transcribe_audio_file(source: str | Path) -> str:
         raise TranscriptionError(f"Audio file not found: {source_path}")
 
     if os.getenv("GROQ_API_KEY"):
-        return _transcribe_via_groq(source_path)
+        try:
+            return _transcribe_via_groq(source_path)
+        except TranscriptionError as exc:
+            if _looks_like_short_audio_error(str(exc)):
+                try:
+                    if source_path.stat().st_size > 4096:
+                        return _transcribe_via_groq_wav_retry(source_path)
+                except (OSError, TranscriptionError):
+                    pass
+            raise
 
     return _transcribe_locally(source_path)

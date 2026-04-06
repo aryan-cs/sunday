@@ -6,7 +6,7 @@ const ALERT_ENTRIES_KEY = "sunday.alertEntries.v1";
 const PENDING_RELOAD_MESSAGE = "The app reloaded before transcription finished.";
 const RECORDING_FILE_READY_TIMEOUT_MS = 2500;
 const RECORDING_FILE_READY_POLL_MS = 120;
-const MIN_READY_RECORDING_BYTES = 1024;
+const MIN_READY_RECORDING_BYTES = 1;
 
 function normalizeLoadedAudioUri(audioUri?: string | null) {
   if (typeof audioUri !== "string") {
@@ -62,9 +62,6 @@ async function waitForNativeRecordingFile(sourceUri: string) {
   const sourceFile = new File(sourceUri);
   if (sourceFile.exists && sourceFile.size > MIN_READY_RECORDING_BYTES) {
     return sourceFile;
-  }
-  if (sourceFile.exists && sourceFile.size > 0) {
-    throw new Error("Recording was too short. Hold the button a little longer and try again.");
   }
   throw new Error("Recording file was not ready. Please try again.");
 }

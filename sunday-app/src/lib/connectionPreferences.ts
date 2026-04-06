@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
 const CONNECTION_PREFERENCES_KEY = "sunday.connection.preferences";
+const DEFAULT_BACKEND_TARGET: BackendTarget = Platform.OS === "web" ? "Hosted" : "Self-hosted";
 
 export type BackendTarget = "Self-hosted" | "Hosted";
 
@@ -12,7 +14,7 @@ export type ConnectionPreferences = {
 
 const DEFAULT_CONNECTION_PREFERENCES: ConnectionPreferences = {
   connectedAgent: "Ollama",
-  backendTarget: "Self-hosted",
+  backendTarget: DEFAULT_BACKEND_TARGET,
   vercelBaseUrl: "",
 };
 

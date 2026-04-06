@@ -857,7 +857,7 @@ function getInitialSettingsState() {
     values[group.longitudeKey] = "";
   }
   values.CONNECTION_AGENT = "Ollama";
-  values.BACKEND_TARGET = "Self-hosted";
+  values.BACKEND_TARGET = Platform.OS === "web" ? "Hosted" : "Self-hosted";
   values.VERCEL_BASE_URL = "";
   values.MESSAGE_CHANNEL = "Telegram";
   return values;
@@ -1115,10 +1115,13 @@ export function SettingsScreen() {
   const syncConnectionStateFromSettings = React.useCallback(
     async (nextSettings: AppSettingsValues) => {
       const nextAgent = String(nextSettings.CONNECTION_AGENT ?? "").trim() || "Ollama";
+      const rawBackendTarget = String(nextSettings.BACKEND_TARGET ?? "").trim();
       const nextBackendTarget =
-        ["Hosted", "Vercel"].includes(String(nextSettings.BACKEND_TARGET ?? "").trim())
+        ["Hosted", "Vercel"].includes(rawBackendTarget)
           ? "Hosted"
-          : "Self-hosted";
+          : Platform.OS === "web" && backendTarget === "Hosted"
+            ? "Hosted"
+            : "Self-hosted";
       const nextVercelBaseUrl = String(nextSettings.VERCEL_BASE_URL ?? "").trim();
 
       setConnectedAgent(nextAgent);
@@ -1131,7 +1134,7 @@ export function SettingsScreen() {
         vercelBaseUrl: nextVercelBaseUrl,
       });
     },
-    [],
+    [backendTarget],
   );
 
   const loadSettings = React.useCallback(async () => {

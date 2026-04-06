@@ -140,11 +140,9 @@ async function appendNativeRecording(formData: FormData, uri: string, fileName: 
     if (!audioFile.exists || audioFile.size <= 0) {
       throw new Error("Recorded audio was empty. Please try again.");
     }
-    const bytes = await audioFile.bytes();
-    if (!bytes.length) {
-      throw new Error("Recorded audio was empty. Please try again.");
-    }
-    formData.append("file", new Blob([bytes], { type: mimeType }), fileName);
+    // React Native FormData expects a native file part with a URI.
+    // Sending a JS Blob here can produce malformed multipart uploads in Expo Go.
+    formData.append("file", { uri: audioFile.uri, name: fileName, type: mimeType } as any, fileName);
     return;
   }
 

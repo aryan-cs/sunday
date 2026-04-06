@@ -70,7 +70,24 @@ function getAudioMimeType(fileName: string) {
   if (fileName.endsWith(".mp3")) {
     return "audio/mpeg";
   }
+  if (fileName.endsWith(".webm")) {
+    return "audio/webm";
+  }
+  if (fileName.endsWith(".ogg")) {
+    return "audio/ogg";
+  }
   return "audio/m4a";
+}
+
+function getBlobExtension(blob: Blob) {
+  const mimeType = blob.type.toLowerCase();
+  if (mimeType.includes("ogg")) {
+    return "ogg";
+  }
+  if (mimeType.includes("mp4") || mimeType.includes("mpeg") || mimeType.includes("aac")) {
+    return "m4a";
+  }
+  return "webm";
 }
 
 function parseActions(raw: TranscriptionResponse["actions"]): ActionItem[] | undefined {
@@ -108,7 +125,7 @@ export async function uploadRecordingForTranscription(uri: string): Promise<Tran
     name: fileName,
     type: getAudioMimeType(fileName.toLowerCase()),
   };
-  formData.append("file", file as unknown as Blob);
+  formData.append("file", file as any, fileName);
 
   const headers: Record<string, string> = {};
   if (API_TOKEN) {
@@ -140,7 +157,7 @@ export async function uploadRecordingForTranscription(uri: string): Promise<Tran
 }
 
 export async function uploadBlobForTranscription(blob: Blob): Promise<TranscriptionResult> {
-  const ext = blob.type.includes("ogg") ? "ogg" : "webm";
+  const ext = getBlobExtension(blob);
   const formData = new FormData();
   formData.append("file", blob, `recording.${ext}`);
 

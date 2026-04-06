@@ -83,6 +83,17 @@ _NEAR_RE = re.compile(r"\bnear\s+([a-zA-Z][a-zA-Z\s\-]{1,40})")
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
+def _is_valid_server_token(token: str) -> bool:
+    """Return True when the bearer token matches a configured server secret."""
+    if not token:
+        return False
+
+    for env_key in ("CRON_SECRET", "SUNDAY_API_KEY"):
+        secret = os.environ.get(env_key, "").strip()
+        if secret and token == secret:
+            return True
+    return False
+
 def _extract_user(request: Request) -> dict | None:
     """Extract user payload from JWT, or None for server/legacy tokens."""
     header = request.headers.get("authorization", "")
@@ -91,10 +102,8 @@ def _extract_user(request: Request) -> dict | None:
     token = header.removeprefix("Bearer ").strip()
 
     # Legacy CRON_SECRET / SUNDAY_API_KEY (server-to-server)
-    for env_key in ("CRON_SECRET", "SUNDAY_API_KEY"):
-        secret = os.environ.get(env_key, "")
-        if secret and token == secret:
-            return None  # authorized, but no user context
+    if _is_valid_server_token(token):
+        return None  # authorized, but no user context
 
     # JWT (app users)
     try:
@@ -106,11 +115,15 @@ def _extract_user(request: Request) -> dict | None:
 async def _require_auth(request: Request) -> dict | None:
     """FastAPI dependency: require a valid JWT or server token."""
     header = request.headers.get("authorization", "")
+    token = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
 
     # No auth configured at all → open (local dev)
     cron_secret = os.environ.get("CRON_SECRET", "")
     sunday_key = os.environ.get("SUNDAY_API_KEY", "")
     if not cron_secret and not sunday_key:
+        return None
+
+    if _is_valid_server_token(token):
         return None
 
     user = _extract_user(request)

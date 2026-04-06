@@ -12,6 +12,7 @@ from backend.transcription import TranscriptionError, transcribe_audio_file
 def test_transcribe_audio_file_converts_audio_and_reads_transcript(tmp_path, monkeypatch):
     audio_path = tmp_path / "input.m4a"
     audio_path.write_bytes(b"fake-audio")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     model_path = tmp_path / "model.bin"
     model_path.write_bytes(b"fake-model")
@@ -45,6 +46,7 @@ def test_transcribe_audio_file_converts_audio_and_reads_transcript(tmp_path, mon
 def test_transcribe_audio_file_raises_when_model_is_missing(tmp_path, monkeypatch):
     audio_path = tmp_path / "input.m4a"
     audio_path.write_bytes(b"fake-audio")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     monkeypatch.setattr(
         transcription.Config,

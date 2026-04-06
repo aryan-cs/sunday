@@ -1,616 +1,477 @@
 # Sunday
 
-Sunday is a personal assistant with two connected parts:
+Sunday is a personal AI assistant that watches your Gmail, manages your calendar, transcribes voice notes, and sends you intelligent summaries via iMessage or Telegram — all powered by your choice of LLM.
 
-- a Python backend that watches Gmail, parses events, writes to Google Calendar, estimates travel, and sends reminders
-- an Expo app that lets you record voice notes, view alert history, and edit a safe subset of `config.env`
+## What It Does
 
-The current mobile flow is:
-
-1. tap the center dot to start recording
-2. tap again to stop
-3. the phone uploads audio to your Mac backend
-4. the Mac transcribes it with a local Whisper model
-5. the Mac generates a short title with a local text model
-6. the app adds the result to the Alerts page
+- **Email → Calendar** — watches Gmail in real time, parses events with AI, writes to Google Calendar, estimates travel time, and sends you a concise summary
+- **Voice Notes** — tap the dot to record, Sunday transcribes and summarizes it instantly
+- **AI Insights** — optional agent mode delivers deeper insights via iMessage/Telegram using web search
+- **Smart Filtering** — ignores promotions, newsletters, and automated emails
+- **OpenClaw** — optional integration with a local AI agent for autonomous task handling
 
 ## Table of Contents
 
 1. [How It Works](#how-it-works)
 2. [Project Layout](#project-layout)
-3. [What You Need](#what-you-need)
-4. [Setup From Scratch](#setup-from-scratch)
-5. [Local Models](#local-models)
-6. [Configuration Guide](#configuration-guide)
-7. [Running Sunday](#running-sunday)
-8. [Expo App](#expo-app)
-9. [Recording and Transcription](#recording-and-transcription)
-10. [Settings Page](#settings-page)
-11. [API Endpoints](#api-endpoints)
-12. [Troubleshooting](#troubleshooting)
-13. [Development](#development)
-14. [To-Do](#to-do)
+3. [Quick Start — Demo (No Setup)](#quick-start--demo-no-setup)
+4. [Deployment](#deployment)
+   - [Backend → Railway](#backend--railway)
+   - [Frontend → Vercel](#frontend--vercel)
+5. [Expo Go (Local Dev)](#expo-go-local-dev)
+6. [Tailscale (Remote Access)](#tailscale-remote-access)
+7. [OpenClaw Integration](#openclaw-integration)
+8. [Local Setup From Scratch](#local-setup-from-scratch)
+9. [LLM Providers](#llm-providers)
+10. [Messaging Channels](#messaging-channels)
+11. [Agent Mode](#agent-mode)
+12. [Configuration Guide](#configuration-guide)
+13. [API Endpoints](#api-endpoints)
+14. [Troubleshooting](#troubleshooting)
+
+---
 
 ## How It Works
 
-Sunday currently has two major workflows.
+### Email → Calendar
 
-### Email to Calendar
-
-```text
-new Gmail email
-  -> LLM parsing
-  -> event cleanup and inference
-  -> venue matching + travel estimate
-  -> Google Calendar write
-  -> reminder text now
-  -> leave-now text later
+```
+Gmail inbox
+  → AI parses email (event, urgency, action items)
+  → Travel time estimated via Google Maps
+  → Event written to Google Calendar
+  → Summary sent to iMessage / Telegram
+  → (optional) OpenClaw or built-in AI adds deeper insights
 ```
 
-Key behavior:
+### Voice Notes
 
-- Sunday only processes emails that arrive after the worker starts
-- Sunday writes managed events into one configurable calendar
-- Sunday still reads your other calendars for context and travel inference
-- vague places like chain restaurants are resolved toward your likely local origin when possible
-
-### Voice Notes in the App
-
-```text
-record on phone
-  -> upload audio to Mac backend
-  -> local Whisper transcription on Mac
-  -> local title generation on Mac
-  -> alerts list entry in app
+```
+Record on phone / browser
+  → Audio uploaded to backend
+  → Groq Whisper API transcribes it
+  → AI generates a short title
+  → Entry appears in Alerts tab
 ```
 
-Key behavior:
-
-- ultra-short accidental taps are ignored before upload
-- the newest voice-note entries appear at the top of Alerts
-- pending transcriptions show a loading row immediately
-- alerts can be swiped left to reveal a delete action
+---
 
 ## Project Layout
 
-Main directories:
+```
+sunday/
+├── backend/          Python backend (Gmail, LLM, calendar, transcription)
+├── sunday-app/       Expo app (iOS, Android, Web)
+├── models/           Local model files (ignored by git)
+├── config.env        Your local config (ignored by git)
+├── config.env.example  Template
+├── Procfile          Railway deployment
+└── vercel.json       Legacy Vercel config (root)
 
-- [backend](/Users/aryan/Desktop/sunday/backend)
-  - Python engine, API, transcription, title generation, Gmail/calendar logic
-- [sunday-app](/Users/aryan/Desktop/sunday/sunday-app)
-  - Expo app
-- [tests](/Users/aryan/Desktop/sunday/tests)
-  - backend test suite
-- [models](/Users/aryan/Desktop/sunday/models)
-  - local model files, ignored by git
-
-Useful entrypoints:
-
-- [main.py](/Users/aryan/Desktop/sunday/main.py)
-  - starts the local Gmail polling worker
-- [server.py](/Users/aryan/Desktop/sunday/server.py)
-  - FastAPI app entrypoint
-- [backend/server.py](/Users/aryan/Desktop/sunday/backend/server.py)
-  - real API implementation
-- [sunday-app/App.tsx](/Users/aryan/Desktop/sunday/sunday-app/App.tsx)
-  - mobile app shell and tab navigation
-
-## What You Need
-
-Before setup, make sure you have:
-
-- Python 3.10+
-- [`uv`](https://docs.astral.sh/uv/)
-- Node.js 18+
-- Expo Go on your iPhone
-- a Google account
-- one LLM API key for email parsing
-- one outbound messaging channel
-  - Telegram is easiest
-  - iMessage works on macOS only
-- a Google Cloud project with:
-  - Gmail API
-  - Google Calendar API
-  - Geocoding API
-  - Distance Matrix API
-  - Places API
-- a Google Maps API key
-- `ffmpeg` installed locally
-
-For local voice-note transcription and title generation, you also need local model files:
-
-- Whisper model:
-  - `models/transcription/ggml-large-v3-turbo-q5_0.bin`
-- text title model:
-  - `models/text/qwen2.5-0.5b-instruct/`
-
-Those model files are intentionally ignored by git.
-
-## Setup From Scratch
-
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/aryan-cs/sunday.git
-cd sunday
+sunday-app/
+├── src/
+│   ├── screens/      Settings, Today, Home (record), Alerts, Auth
+│   ├── lib/          API client, auth, recorder, transcription
+│   └── stubs/        Web platform stubs (react-native-maps)
+├── vercel.json       Vercel deployment config for Expo Web
+└── metro.config.js   Metro bundler config (web stubs)
 ```
 
-### 2. Install Python dependencies
+---
 
-```bash
-uv sync --extra dev
+## Quick Start — Demo (No Setup)
+
+The fastest way to try Sunday is the hosted web app. No account, no API keys.
+
+1. Open the Vercel URL (set by whoever deployed it)
+2. Click **Try Demo →**
+3. Browse the pre-populated Alerts, Today schedule, and Settings
+
+---
+
+## Deployment
+
+### Backend → Railway
+
+1. Fork this repo to your GitHub account
+2. Go to **railway.app** → **New Project** → **Deploy from GitHub repo** → select your fork
+3. Railway detects the `Procfile` automatically
+4. Go to **Variables** and add:
+
+```
+GROQ_API_KEY          = gsk_...          # from console.groq.com (free)
+ACTIVE_LLM_PROVIDER   = groq
+GROQ_MODEL            = llama-3.1-8b-instant
+JWT_SECRET            = <random 32+ char string>
+AGENT_MODE            = off
 ```
 
-### 3. Install Expo app dependencies
+5. **Settings → Networking → Generate Domain** — copy your Railway URL
+
+> **Transcription** uses Groq's Whisper API automatically when `GROQ_API_KEY` is set — no model files needed on the server.
+
+**Optional — real Gmail sign-in:**
+
+To let users connect their own Gmail:
+
+1. In Google Cloud Console → **Credentials** → change your OAuth client type to **Web application**
+2. Add `https://your-app.railway.app/auth/google/callback` as an Authorized redirect URI
+3. Download the new `credentials.json`, base64-encode it:
+   ```bash
+   python3 -c "import base64; print(base64.b64encode(open('credentials.json','rb').read()).decode())"
+   ```
+4. Add to Railway: `GOOGLE_CREDENTIALS_JSON = <base64 output>`
+
+---
+
+### Frontend → Vercel
+
+1. Go to **vercel.com** → **Add New Project** → import your fork
+2. Set **Root Directory** to `sunday-app`
+3. Add environment variable:
+   ```
+   EXPO_PUBLIC_API_BASE_URL = https://your-app.railway.app
+   ```
+4. Click **Deploy**
+
+Judges/users visit your Vercel URL — no install needed.
+
+---
+
+## Expo Go (Local Dev)
+
+Expo Go lets anyone on your local network try the app instantly — no TestFlight, no build.
+
+### Setup
 
 ```bash
 cd sunday-app
+cp .env.example .env
+# Edit .env — set EXPO_PUBLIC_API_BASE_URL to your Mac's local IP:
+# EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:8000
 npm install
-cd ..
+npm run start
 ```
 
-### 4. Create your local config file
+Scan the QR code with the **Expo Go** app (iOS App Store / Google Play).
+
+### Tunnel mode (if QR code doesn't connect)
 
 ```bash
+npm run start -- --tunnel
+```
+
+This routes traffic through Expo's servers so the phone doesn't need to be on the same network.
+
+### Finding your Mac's IP
+
+```bash
+ipconfig getifaddr en0   # Wi-Fi
+ipconfig getifaddr en1   # Ethernet
+```
+
+### Limitations in Expo Go
+
+| Feature | Expo Go | Deployed build |
+|---|---|---|
+| Core app (record, alerts, settings) | ✅ | ✅ |
+| iMessage / Telegram notifications | ✅ (backend sends) | ✅ |
+| Voice recording | ✅ | ✅ |
+| Home screen widgets | ❌ | ✅ |
+| Push notifications | ❌ | ✅ |
+| Background processing | ❌ | ✅ |
+
+---
+
+## Tailscale (Remote Access)
+
+Tailscale lets the backend (on your Mac) be reachable from anywhere — useful for OpenClaw and for accessing Sunday when you're not on the same Wi-Fi.
+
+### Setup
+
+1. Install Tailscale on your Mac: **tailscale.com/download**
+2. Sign in and enable Tailscale
+3. Get your Mac's Tailscale IP:
+   ```bash
+   tailscale ip -4
+   ```
+4. Use that IP in `EXPO_PUBLIC_API_BASE_URL`:
+   ```
+   EXPO_PUBLIC_API_BASE_URL=http://100.x.y.z:8000
+   ```
+
+Now Expo Go can reach your backend from any network — phone data, different Wi-Fi, anywhere.
+
+### Use with OpenClaw
+
+If you're running OpenClaw on your Mac and want the Railway backend to send it webhooks:
+
+1. Enable Tailscale in OpenClaw config:
+   ```json
+   "tailscale": { "mode": "on" }
+   ```
+2. OpenClaw gets a Tailscale URL like `https://your-mac.tailnet.ts.net:18789`
+3. Set in Railway variables:
+   ```
+   OPENCLAW_BASE_URL  = https://your-mac.tailnet.ts.net:18789
+   OPENCLAW_TOKEN     = your-openclaw-token
+   OPENCLAW_ENABLED   = true
+   AGENT_MODE         = openclaw
+   ```
+
+---
+
+## OpenClaw Integration
+
+OpenClaw is an optional local AI agent that runs on your Mac. When enabled, Sunday sends it action items from emails and voice notes for autonomous handling.
+
+### How it works
+
+```
+Email processed by Sunday
+  → action items extracted
+  → POST /hooks/wake sent to OpenClaw
+  → OpenClaw agent runs with your LLM
+  → responds via iMessage
+```
+
+### Setup
+
+1. Install OpenClaw: **openclaw.ai**
+2. Set up your preferred LLM (needs Anthropic or OpenAI key in OpenClaw)
+3. Enable the iMessage channel in OpenClaw and restrict to your number:
+   ```json
+   "dmPolicy": "allowlist",
+   "allowFrom": ["+1xxxxxxxxxx"]
+   ```
+4. Enable Tailscale in OpenClaw for remote access
+5. In `config.env` (local) or Railway variables:
+   ```
+   AGENT_MODE         = openclaw
+   OPENCLAW_ENABLED   = true
+   OPENCLAW_BASE_URL  = https://your-mac.tailnet.ts.net:18789
+   OPENCLAW_TOKEN     = your-hook-token
+   ```
+
+### Agent mode options
+
+| Mode | What happens |
+|---|---|
+| `off` | No AI insights, just summaries |
+| `builtin` | Sunday's own LLM + DuckDuckGo web search, sends insight via iMessage/Telegram |
+| `openclaw` | Sends action items to your local OpenClaw agent |
+
+---
+
+## Local Setup From Scratch
+
+### Requirements
+
+- Python 3.10+
+- Node.js 18+
+- `uv` package manager (`pip install uv`)
+- Google Cloud project with Gmail API, Calendar API, Maps APIs enabled
+- One LLM API key (Groq recommended — free tier)
+
+### Steps
+
+```bash
+# 1. Clone
+git clone https://github.com/aryan-cs/sunday.git
+cd sunday
+
+# 2. Python deps
+uv sync --extra dev
+
+# 3. App deps
+cd sunday-app && npm install && cd ..
+
+# 4. Config
 cp config.env.example config.env
+# Edit config.env with your keys
+
+# 5. Google OAuth
+# Download credentials.json from Google Cloud Console
+# Run backend once to trigger browser OAuth flow
+
+# 6. Start backend
+uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000
+
+# 7. Start app
+cd sunday-app && npm run start
 ```
 
-### 5. Configure Google OAuth for Gmail and Calendar
-
-In Google Cloud:
-
-1. create a project
-2. configure the OAuth consent screen
-3. add your own account as a test user
-4. enable:
-   - Gmail API
-   - Google Calendar API
-5. create a `Desktop app` OAuth client
-6. download the JSON and save it as:
-   - [credentials.json](/Users/aryan/Desktop/sunday/credentials.json)
-
-Sunday will create [token.json](/Users/aryan/Desktop/sunday/token.json) on first successful auth.
-
-### 6. Configure Google Maps
-
-Enable these APIs in the same Google Cloud project:
-
-- Geocoding API
-- Distance Matrix API
-- Places API
-
-Then create an API key and put it into:
+### Local config minimum
 
 ```env
-GOOGLE_MAPS_API_KEY=your_key_here
+ACTIVE_LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=llama-3.1-8b-instant
+
+GOOGLE_CREDENTIALS_FILE=credentials.json
+GOOGLE_TOKEN_FILE=token.json
+
+IMESSAGE_ENABLED=true
+IMESSAGE_RECIPIENT=+1xxxxxxxxxx
+# or use Telegram:
+# TELEGRAM_BOT_TOKEN=...
+# TELEGRAM_CHAT_ID=...
+
+DEFAULT_HOME_LOCATION=Your City, State
+TIMEZONE=America/Chicago
 ```
 
-### 7. Configure an LLM provider
+---
 
-The easiest option is Gemini:
+## LLM Providers
 
-```env
-ACTIVE_LLM_PROVIDER=gemini
-GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-2.0-flash
-```
+Sunday supports any of these — set `ACTIVE_LLM_PROVIDER` to one:
 
-### 8. Configure messaging
+| Provider | Key env var | Free tier |
+|---|---|---|
+| `groq` | `GROQ_API_KEY` | ✅ Generous |
+| `gemini` | `GEMINI_API_KEY` | ✅ 1500 req/day |
+| `openrouter` | `OPENROUTER_API_KEY` | ✅ Free models |
+| `openai` | `OPENAI_API_KEY` | ❌ Paid |
+| `anthropic` | `ANTHROPIC_API_KEY` | ❌ Paid |
+| `ollama` | — | ✅ Self-hosted |
+| `mistral` | `MISTRAL_API_KEY` | ✅ Free tier |
+| `cerebras` | `CEREBRAS_API_KEY` | ✅ Free tier |
+| `together` | `TOGETHER_API_KEY` | ✅ Free credits |
 
-Telegram example:
+**Recommended for deployment:** Groq — fast, free tier, and also handles transcription via Whisper API.
 
-```env
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-```
+---
 
-iMessage example:
+## Messaging Channels
+
+### iMessage (macOS only)
 
 ```env
 IMESSAGE_ENABLED=true
-IMESSAGE_RECIPIENT=+12175551234
+IMESSAGE_RECIPIENT=+1xxxxxxxxxx
 TEXT_EMAIL_LINKS=true
 ```
 
-### 9. Create the Expo app env file
-
+Requires `imsg` CLI:
 ```bash
-cp sunday-app/.env.example sunday-app/.env
+brew install steipete/tap/imsg
 ```
+Grant Terminal Full Disk Access in System Settings → Privacy & Security.
 
-Then edit [sunday-app/.env](/Users/aryan/Desktop/sunday/sunday-app/.env):
+### Telegram
+
+1. Message `@BotFather` on Telegram → `/newbot`
+2. Copy the token
+3. Message your bot once, then get your chat ID from `api.telegram.org/bot<token>/getUpdates`
 
 ```env
-EXPO_PUBLIC_API_BASE_URL=http://YOUR_MAC_IP:8000
-EXPO_PUBLIC_API_TOKEN=
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHAT_ID=your_chat_id
 ```
 
-If you set `CRON_SECRET` in [config.env](/Users/aryan/Desktop/sunday/config.env), then `EXPO_PUBLIC_API_TOKEN` must match it.
+---
 
-### 10. Put the local models in place
+## Agent Mode
 
-Default transcription model:
-
-- [models/transcription/ggml-large-v3-turbo-q5_0.bin](/Users/aryan/Desktop/sunday/models/transcription/ggml-large-v3-turbo-q5_0.bin)
-
-Default title model:
-
-- [models/text/qwen2.5-0.5b-instruct](/Users/aryan/Desktop/sunday/models/text/qwen2.5-0.5b-instruct)
-
-To download the default title model:
-
-```bash
-mkdir -p models/text/qwen2.5-0.5b-instruct
-uv run hf download Qwen/Qwen2.5-0.5B-Instruct --local-dir models/text/qwen2.5-0.5b-instruct
-```
-
-## Local Models
-
-The repo does not ship model binaries or weight folders. They stay local in:
-
-- [models/transcription](/Users/aryan/Desktop/sunday/models/transcription)
-- [models/text](/Users/aryan/Desktop/sunday/models/text)
-
-`models/` is ignored by git on purpose.
-
-The Settings page only shows models that are fully present on disk:
-
-- transcription models are discovered from `.bin` files in the transcription/audio model folders
-- summarization models are discovered from local Transformers model folders that include both config files and real weights
-
-### Recommended model choices
-
-For transcription:
-
-- Best quality on a reasonably strong Mac:
-  - `ggml-large-v3-turbo-q5_0`
-- Best default balance for most local setups:
-  - `ggml-small.en-q5_1`
-- Faster / lighter:
-  - `ggml-base.en-q5_1`
-- Lightest option when you care most about speed:
-  - `ggml-tiny.en-q5_1`
-
-For title generation / summarization:
-
-- Best overall current recommendation:
-  - `qwen2.5-0.5b-instruct`
-- Faster and lighter:
-  - `smollm2-360m-instruct`
-- Smallest local option:
-  - `smollm2-135m-instruct`
-
-### Suggested pairings
-
-- Strongest local quality:
-  - `ggml-large-v3-turbo-q5_0` + `qwen2.5-0.5b-instruct`
-- Good everyday local default:
-  - `ggml-small.en-q5_1` + `qwen2.5-0.5b-instruct`
-- Faster / lighter self-hosted dev setup:
-  - `ggml-base.en-q5_1` + `smollm2-360m-instruct`
-- Lowest-resource local setup:
-  - `ggml-tiny.en-q5_1` + `smollm2-135m-instruct`
-
-### Download examples
-
-Download a few transcription models:
-
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run python - <<'PY'
-from huggingface_hub import hf_hub_download
-
-for filename in [
-    "ggml-tiny.en-q5_1.bin",
-    "ggml-base.en-q5_1.bin",
-    "ggml-small.en-q5_1.bin",
-]:
-    hf_hub_download(
-        repo_id="ggerganov/whisper.cpp",
-        filename=filename,
-        local_dir="models/transcription",
-    )
-PY
-```
-
-Download a few summarization models:
-
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run python - <<'PY'
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="Qwen/Qwen2.5-0.5B-Instruct",
-    local_dir="models/text/qwen2.5-0.5b-instruct",
-)
-snapshot_download(
-    repo_id="HuggingFaceTB/SmolLM2-360M-Instruct",
-    local_dir="models/text/smollm2-360m-instruct",
-)
-snapshot_download(
-    repo_id="HuggingFaceTB/SmolLM2-135M-Instruct",
-    local_dir="models/text/smollm2-135m-instruct",
-)
-PY
-```
-
-### Point Sunday at a specific model
-
-Update [config.env](/Users/aryan/Desktop/sunday/config.env):
+Controls what Sunday does after processing an email or voice note.
 
 ```env
-TRANSCRIPTION_MODEL_PATH=models/transcription/ggml-small.en-q5_1.bin
-TRANSCRIPT_TITLE_MODEL_PATH=models/text/qwen2.5-0.5b-instruct
+AGENT_MODE=off       # just send the summary (default)
+AGENT_MODE=builtin   # Sunday calls the LLM with web search, sends insight
+AGENT_MODE=openclaw  # push to your local OpenClaw agent
 ```
 
-Then restart the backend:
+`builtin` works with any configured LLM provider — no OpenClaw needed.
 
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
-```
+---
 
 ## Configuration Guide
 
-Important non-secret config values:
+Full list of settings — all editable in `config.env` or via the app Settings screen.
 
-- `TARGET_CALENDAR_ID`
-  - which calendar Sunday writes its managed events into
-- `DEFAULT_HOME_LOCATION`
-- `DEFAULT_HOME_LATITUDE`
-- `DEFAULT_HOME_LONGITUDE`
-- `DEFAULT_WORK_LOCATION`
-- `DEFAULT_WORK_LATITUDE`
-- `DEFAULT_WORK_LONGITUDE`
-- `WORK_DAYS`
-- `WORKDAY_START_TIME`
-- `WORKDAY_END_TIME`
-- `TRAVEL_TYPE`
-  - one of:
-    - `driving`
-    - `walking`
-    - `bicycling`
-    - `transit`
-- `PREP_TIME_MINUTES`
-- `ONLINE_PREP_MINUTES`
-- `GMAIL_LABELS`
-  - comma-separated list of Gmail label IDs to watch
-  - defaults to `CATEGORY_PRIMARY`, which is the Primary inbox tab and filters out promotions, social, and other noise
-  - set to `INBOX` to watch everything across all tabs
-  - you can watch multiple inboxes at once, for example:
-    - `CATEGORY_PRIMARY,work` — Primary tab plus a custom label named `work`
-    - `CATEGORY_PRIMARY,CATEGORY_UPDATES` — Primary and Updates tabs
-  - built-in Gmail label IDs: `INBOX`, `CATEGORY_PRIMARY`, `CATEGORY_SOCIAL`, `CATEGORY_PROMOTIONS`, `CATEGORY_UPDATES`, `CATEGORY_FORUMS`
-  - custom labels use the exact label name as it appears in Gmail
-  - also editable from the Settings page in the app
-- `POLL_INTERVAL_SECONDS`
-- `MAX_EMAILS_PER_CYCLE`
-- `TIMEZONE`
-- `TEXT_EMAIL_LINKS`
+| Key | Description |
+|---|---|
+| `ACTIVE_LLM_PROVIDER` | Which LLM to use |
+| `TARGET_CALENDAR_ID` | Calendar Sunday writes events to (`primary` = default) |
+| `DEFAULT_HOME_LOCATION` | Used for travel estimates |
+| `WORK_DAYS` | Comma-separated: `mon,tue,wed,thu,fri` |
+| `WORKDAY_START_TIME` | HH:MM 24h format |
+| `WORKDAY_END_TIME` | HH:MM 24h format |
+| `TRAVEL_TYPE` | `driving`, `walking`, `bicycling`, `transit` |
+| `PREP_TIME_MINUTES` | Buffer before in-person events |
+| `ONLINE_PREP_MINUTES` | Buffer before online events |
+| `GMAIL_LABELS` | Labels to watch: `CATEGORY_PRIMARY`, `INBOX`, custom labels |
+| `POLL_INTERVAL_SECONDS` | How often to check Gmail |
+| `MAX_EMAILS_PER_CYCLE` | Max emails processed per poll |
+| `AGENT_MODE` | `off`, `builtin`, `openclaw` |
+| `AUTO_CLEANUP_HOURS` | Delete managed events older than N hours |
+| `TIMEZONE` | e.g. `America/Chicago` |
+| `LLM_MAX_TOKENS` | Max tokens per LLM call |
+| `LLM_TEMPERATURE` | LLM temperature (0.0–1.0) |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
-Transcription-related config:
-
-- `TRANSCRIPTION_MODEL_PATH`
-  - Whisper model path
-- `TRANSCRIPTION_LANGUAGE`
-- `TRANSCRIPTION_THREADS`
-- `TRANSCRIPT_TITLE_MODEL_PATH`
-  - local text-model folder used for title generation
-- `TRANSCRIPT_TITLE_DEVICE`
-  - usually `auto`
-- `TRANSCRIPT_TITLE_MAX_NEW_TOKENS`
-
-## Running Sunday
-
-Usually you run two backend processes during local development:
-
-1. the API server
-2. the Gmail polling worker
-
-### Start the API server
-
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run uvicorn server:app --host 0.0.0.0 --port 8000
-```
-
-### Start the email worker
-
-In a second terminal:
-
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run python main.py
-```
-
-On first run:
-
-- Google OAuth should open in the browser
-- after approval, [token.json](/Users/aryan/Desktop/sunday/token.json) will be created
-
-### Useful backend commands
-
-Run tests:
-
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run --extra dev pytest -q
-```
-
-Reset Google OAuth locally:
-
-```bash
-cd /Users/aryan/Desktop/sunday
-rm -f token.json
-uv run python main.py
-```
-
-## Expo App
-
-### Start the app
-
-```bash
-cd /Users/aryan/Desktop/sunday/sunday-app
-npm run start
-```
-
-That uses Expo tunnel mode by default, which is the most reliable local setup for Expo Go.
-
-Then:
-
-1. scan the QR code with your iPhone camera
-2. open it in Expo Go
-
-### Current app tabs
-
-- Settings
-  - editable safe config values from `config.env`
-- Record
-  - tap the center dot to start or stop recording
-- Alerts
-  - newest-first voice-note history
-  - swipe left to reveal delete
-
-### Expo app verification
-
-```bash
-cd /Users/aryan/Desktop/sunday/sunday-app
-npx tsc --noEmit
-```
-
-## Recording and Transcription
-
-Recording currently works like this:
-
-1. tap the center dot
-2. app records audio on the phone
-3. tap again to stop
-4. ultra-short near-empty recordings are ignored
-5. app uploads the audio file to `POST /api/transcribe`
-6. backend transcribes with local Whisper
-7. backend generates a short title with a local text model
-8. app inserts or updates an Alerts entry
-
-Current backend response for transcription includes:
-
-- `text`
-- `summary`
-
-The Expo terminal logs both values during development.
-
-## Settings Page
-
-The Settings page can now read and write a safe subset of [config.env](/Users/aryan/Desktop/sunday/config.env) through the backend.
-
-Current behavior:
-
-- values load from `GET /api/settings`
-- saves go to `PUT /api/settings`
-- the backend writes them back into `config.env`
-- runtime config is updated immediately for normal non-secret settings
-- validation warnings and errors are returned after save
-
-Intentional limitation:
-
-- secrets are not editable in the app
-- API keys, tokens, OAuth files, and similar sensitive values stay local and manual
-
-The `Models` subsection in the app is discovery-based:
-
-- it lists local transcription models the backend can actually see
-- it lists local summarization models that appear fully downloaded
-- because model binaries are not committed, your options depend on what you have downloaded locally
+---
 
 ## API Endpoints
 
-Current local API endpoints:
+### Auth
+| Method | Path | Description |
+|---|---|---|
+| POST | `/auth/signup` | Create account |
+| POST | `/auth/login` | Log in |
+| POST | `/auth/demo` | Demo login (no account needed) |
+| GET | `/auth/google` | Start Google OAuth web flow |
+| GET | `/auth/google/callback` | Google OAuth callback |
 
-- `GET /health`
-- `GET /api/status`
-- `GET /api/settings`
-- `PUT /api/settings`
-- `POST /api/process`
-- `POST /api/plan-day`
-- `GET /api/events`
-- `POST /api/location`
-- `POST /api/register-push-token`
-- `POST /api/transcribe`
+### App
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Health check |
+| GET | `/api/status` | Config status |
+| GET | `/api/settings` | Get all settings |
+| PUT | `/api/settings` | Update settings |
+| GET | `/api/events` | Upcoming calendar events with travel |
+| POST | `/api/transcribe` | Upload audio for transcription |
+| POST | `/api/plan-day` | Generate day plan |
+| POST | `/api/location` | Update phone location |
+| POST | `/api/process` | Manually trigger email processing |
+
+---
 
 ## Troubleshooting
 
-### Expo Go opens but the app cannot reach the backend
+### App can't reach backend in Expo Go
 
-Check:
+- Check `EXPO_PUBLIC_API_BASE_URL` is your Mac's IP (not localhost)
+- Backend must be running with `--host 0.0.0.0`
+- Phone and Mac must be on the same Wi-Fi — or use Tailscale
 
-- [sunday-app/.env](/Users/aryan/Desktop/sunday/sunday-app/.env) has the correct Mac IP
-- backend is running with `--host 0.0.0.0`
-- phone and Mac can reach each other
+### Transcription fails on Railway
 
-### Expo Go gets stuck on "Opening project..."
+- Make sure `GROQ_API_KEY` is set in Railway variables
+- Groq Whisper API handles transcription in the cloud — no local model needed
 
-Use tunnel mode:
+### OpenClaw not receiving webhooks
 
-```bash
-cd /Users/aryan/Desktop/sunday/sunday-app
-npm run start
-```
+- Make sure Tailscale is running on your Mac
+- Check `OPENCLAW_BASE_URL` points to your Tailscale IP/hostname
+- Verify `OPENCLAW_TOKEN` matches the token in `~/.openclaw/openclaw.json`
+- Check OpenClaw gateway is running: `openclaw start`
 
-### Recording works but transcription fails
+### "Something went wrong" in iMessage from OpenClaw
 
-Check:
+- OpenClaw's `claude-cli` model requires an active Claude Code session
+- Switch to a direct API model: `openclaw config set agents.defaults.model.primary "anthropic/claude-3-5-haiku-latest"`
+- Or set `AGENT_MODE=builtin` in your config to bypass OpenClaw entirely
 
-- backend is running
-- `ffmpeg` is installed
-- the Whisper model exists at `TRANSCRIPTION_MODEL_PATH`
+### Google OAuth fails on deployed backend
 
-### Title generation falls back to simple summaries
+- Make sure your OAuth client type is **Web application** (not Desktop app)
+- Add `https://your-railway-url/auth/google/callback` to Authorized redirect URIs
+- Set `GOOGLE_CREDENTIALS_JSON` in Railway (base64-encoded credentials.json)
 
-Check:
+### Sunday processes promotional emails
 
-- the selected text model exists at `TRANSCRIPT_TITLE_MODEL_PATH`
-- the backend was restarted after model/config changes
-
-### Sunday does nothing with old unread emails
-
-That is expected.
-
-Sunday intentionally ignores the backlog that already existed before the worker started.
-
-### Calendar events are written to the wrong calendar
-
-Check:
-
-- `TARGET_CALENDAR_ID`
-- or update it from the Settings page
-
-## Development
-
-Recommended checks before pushing:
-
-```bash
-cd /Users/aryan/Desktop/sunday
-uv run --extra dev pytest -q
-```
-
-```bash
-cd /Users/aryan/Desktop/sunday/sunday-app
-npx tsc --noEmit
-```
-
-Important local-only files:
-
-- [config.env](/Users/aryan/Desktop/sunday/config.env)
-- [credentials.json](/Users/aryan/Desktop/sunday/credentials.json)
-- [token.json](/Users/aryan/Desktop/sunday/token.json)
-- [models](/Users/aryan/Desktop/sunday/models)
-
-These should not be pushed.
-
-## To-Do
-
-- [ ] Expand the Settings page with more config groups and nicer grouped controls
-- [ ] Show full transcript details when tapping an alert entry
-- [ ] Add richer actions on alert rows beyond delete
-- [ ] Optional phone-location support that feels invisible and production-safe
-- [ ] Better voice-note post-processing beyond short generated titles
+- Set `GMAIL_LABELS=CATEGORY_PRIMARY` to watch only the Primary inbox tab
+- The LLM prompt filters marketing emails but `CATEGORY_PRIMARY` is the strongest filter

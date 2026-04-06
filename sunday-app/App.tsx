@@ -173,7 +173,15 @@ function RecordTabIcon({
   );
 }
 
-function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]; isDemo?: boolean }) {
+function Main({
+  seedEntries = [],
+  isDemo = false,
+  startDemoGuideImmediately = false,
+}: {
+  seedEntries?: AlertEntry[];
+  isDemo?: boolean;
+  startDemoGuideImmediately?: boolean;
+}) {
   const insets = useSafeAreaInsets();
   const scrollRef = React.useRef<ScrollView>(null);
   const initialPageAppliedRef = React.useRef(false);
@@ -183,6 +191,11 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
   const recordIconProgress = React.useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
+  const [shouldForceDemoCoach, setShouldForceDemoCoach] = React.useState(startDemoGuideImmediately);
+
+  React.useEffect(() => {
+    setShouldForceDemoCoach(startDemoGuideImmediately);
+  }, [startDemoGuideImmediately]);
 
   React.useEffect(() => {
     activeIndexRef.current = activeIndex;
@@ -579,7 +592,9 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
             isDemo={isDemo}
             isActive={activeIndex === RECORD_TAB_INDEX}
             hasEntries={alertEntries.length > 0}
+            showCoachImmediately={shouldForceDemoCoach}
             onBackgroundPress={handleRecordBackgroundPress}
+            onImmediateCoachConsumed={() => setShouldForceDemoCoach(false)}
             onNavigateToEntries={() => handleTabPress(ALERTS_TAB_INDEX)}
             onTranscriptPending={handleTranscriptPending}
             onTranscript={handleTranscript}
@@ -688,6 +703,7 @@ export default function App() {
   const [authed, setAuthed] = React.useState(false);
   const [isDemo, setIsDemo] = React.useState(false);
   const [seedEntries, setSeedEntries] = React.useState<AlertEntry[]>([]);
+  const [startDemoGuideImmediately, setStartDemoGuideImmediately] = React.useState(false);
 
   React.useEffect(() => {
     getAuthState()
@@ -696,10 +712,12 @@ export default function App() {
           await clearAuthState();
           setIsDemo(false);
           setSeedEntries([]);
+          setStartDemoGuideImmediately(false);
           setAuthed(false);
         } else {
           setIsDemo(false);
           setSeedEntries([]);
+          setStartDemoGuideImmediately(false);
           setAuthed(!!state);
         }
       })
@@ -714,6 +732,7 @@ export default function App() {
   const handleAuth = React.useCallback(
     async (token: string, demo: boolean, demoEntries?: object[]) => {
       setIsDemo(demo);
+      setStartDemoGuideImmediately(demo);
       if (demo && demoEntries?.length) {
         setSeedEntries(normalizeDemoSeedEntries(demoEntries as AlertEntry[]));
       } else if (demo) {
@@ -734,7 +753,15 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
       <SafeAreaProvider>
-        {authed ? <Main seedEntries={seedEntries} isDemo={isDemo} /> : <AuthScreen onAuth={handleAuth} />}
+        {authed ? (
+          <Main
+            seedEntries={seedEntries}
+            isDemo={isDemo}
+            startDemoGuideImmediately={startDemoGuideImmediately}
+          />
+        ) : (
+          <AuthScreen onAuth={handleAuth} />
+        )}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -21,9 +21,18 @@ type PageCoachOverlayProps = {
   onDismiss: () => void;
 };
 
-export function useDelayedCoach(active: boolean, delayMs: number = COACH_DELAY_MS) {
+type UseDelayedCoachOptions = {
+  showImmediately?: boolean;
+};
+
+export function useDelayedCoach(
+  active: boolean,
+  delayMs: number = COACH_DELAY_MS,
+  options: UseDelayedCoachOptions = {},
+) {
   const [visible, setVisible] = React.useState(false);
   const dismissedRef = React.useRef(false);
+  const { showImmediately = false } = options;
 
   React.useEffect(() => {
     if (!active) {
@@ -33,6 +42,11 @@ export function useDelayedCoach(active: boolean, delayMs: number = COACH_DELAY_M
     }
 
     dismissedRef.current = false;
+    if (showImmediately) {
+      setVisible(true);
+      return;
+    }
+
     setVisible(false);
 
     const timeout = setTimeout(() => {
@@ -42,7 +56,7 @@ export function useDelayedCoach(active: boolean, delayMs: number = COACH_DELAY_M
     }, delayMs);
 
     return () => clearTimeout(timeout);
-  }, [active, delayMs]);
+  }, [active, delayMs, showImmediately]);
 
   const dismiss = React.useCallback(() => {
     dismissedRef.current = true;

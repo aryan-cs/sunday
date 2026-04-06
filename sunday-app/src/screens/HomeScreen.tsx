@@ -25,7 +25,9 @@ type HomeScreenProps = {
   isDemo?: boolean;
   isActive?: boolean;
   hasEntries?: boolean;
+  showCoachImmediately?: boolean;
   onBackgroundPress?: () => void;
+  onImmediateCoachConsumed?: () => void;
   onNavigateToEntries?: () => void;
   onTranscriptPending?: (audioUri: string) => string;
   onTranscript?: (entryId: string, transcript: string, summary?: string, actions?: ActionItem[]) => void;
@@ -37,7 +39,9 @@ export function HomeScreen({
   isDemo = false,
   isActive = true,
   hasEntries = false,
+  showCoachImmediately = false,
   onBackgroundPress,
+  onImmediateCoachConsumed,
   onNavigateToEntries,
   onTranscriptPending,
   onTranscript,
@@ -48,9 +52,18 @@ export function HomeScreen({
   const [isTogglingRecording, setIsTogglingRecording] = React.useState(false);
   const scale = React.useRef(new Animated.Value(1)).current;
   const isRecording = recorder.state.isRecording;
+  const shouldShowCoachNow = isActive && !isRecording && !isTogglingRecording;
   const { visible: isCoachVisible, dismiss: dismissCoach } = useDelayedCoach(
-    isActive && !isRecording && !isTogglingRecording,
+    shouldShowCoachNow,
+    undefined,
+    { showImmediately: showCoachImmediately && shouldShowCoachNow },
   );
+
+  React.useEffect(() => {
+    if (showCoachImmediately && shouldShowCoachNow) {
+      onImmediateCoachConsumed?.();
+    }
+  }, [onImmediateCoachConsumed, shouldShowCoachNow, showCoachImmediately]);
 
   React.useEffect(() => {
     onRecordingChange?.(isRecording);

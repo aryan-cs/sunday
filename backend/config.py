@@ -39,6 +39,47 @@ def _get_csv(name: str, default: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+_GMAIL_SYSTEM_LABELS = {
+    "INBOX",
+    "UNREAD",
+    "STARRED",
+    "IMPORTANT",
+    "SENT",
+    "DRAFT",
+    "SPAM",
+    "TRASH",
+    "CATEGORY_FORUMS",
+    "CATEGORY_UPDATES",
+    "CATEGORY_PERSONAL",
+    "CATEGORY_PROMOTIONS",
+    "CATEGORY_SOCIAL",
+    "CATEGORY_PRIMARY",
+}
+
+
+def normalize_gmail_label_id(value: str) -> str:
+    """Return a Gmail-safe label id, preserving user labels while fixing system labels."""
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+
+    upper = cleaned.upper()
+    if upper in _GMAIL_SYSTEM_LABELS:
+        return upper
+
+    return cleaned
+
+
+def _get_gmail_label_ids(name: str, default: str) -> list[str]:
+    """Return cleaned Gmail label ids with system labels normalized to API-safe casing."""
+    raw = os.getenv(name, default)
+    return [
+        normalized
+        for item in raw.split(",")
+        if (normalized := normalize_gmail_label_id(item))
+    ]
+
+
 def _get_optional_int(name: str) -> int | None:
     """Return an int env var, or None when unset."""
     value = os.getenv(name, "").strip()
@@ -185,7 +226,7 @@ class Config:
     online_prep: int = int(os.getenv("ONLINE_PREP_MINUTES", "5"))
     travel_mode: str = _get_with_legacy("TRAVEL_TYPE", "DEFAULT_TRAVEL_MODE", "driving")
     auto_cleanup_hours: int = int(os.getenv("AUTO_CLEANUP_HOURS", "24"))
-    gmail_labels: list[str] = _get_csv("GMAIL_LABELS", "CATEGORY_PRIMARY")
+    gmail_labels: list[str] = _get_gmail_label_ids("GMAIL_LABELS", "CATEGORY_PRIMARY")
     gmail_initial_lookback_minutes: int = int(
         os.getenv("GMAIL_INITIAL_LOOKBACK_MINUTES", "180")
     )

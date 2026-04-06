@@ -16,8 +16,10 @@ class _FakeMessages:
         self._list_payloads = list_payloads
         self._get_payloads = get_payloads
         self.get_calls: list[str] = []
+        self.list_calls: list[dict] = []
 
     def list(self, **kwargs):
+        self.list_calls.append(kwargs)
         del kwargs
         return _FakeRequest(self._list_payloads.pop(0))
 
@@ -100,3 +102,25 @@ def test_get_new_emails_can_pick_up_a_new_message_even_if_it_is_not_unread():
     emails = watcher.get_new_emails(max_results=10)
 
     assert [email["id"] for email in emails] == ["new-opened"]
+
+
+def test_list_page_normalizes_gmail_system_label_ids(monkeypatch):
+    watcher = object.__new__(GmailWatcher)
+    messages = _FakeMessages(
+        list_payloads=[{"messages": []}],
+        get_payloads={},
+    )
+    watcher.service = _FakeService(messages)
+
+    monkeypatch.setattr("backend.gmail_watcher.Config.gmail_labels", ["inbox", "category_primary", "Label_123"])
+
+    watcher._list_message_ids_page(max_results=5)
+
+    assert messages.list_calls == [
+        {
+            "userId": "me",
+            "labelIds": ["INBOX", "CATEGORY_PRIMARY", "Label_123"],
+            "maxResults": 5,
+            "pageToken": None,
+        }
+    ]

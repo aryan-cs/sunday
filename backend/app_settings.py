@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import os
 
-from .config import Config, PROJECT_ROOT
+from .config import Config, PROJECT_ROOT, normalize_gmail_label_id
 
 CONFIG_FILE_PATH = PROJECT_ROOT / "config.env"
 
@@ -317,7 +317,16 @@ def _normalize_setting_value(
             raise ValueError("must be at least 0")
         return str(parsed), parsed
     if setting.kind == "csv":
-        items = [item.strip().lower() for item in text.split(",") if item.strip()]
+        if setting.env_name == "WORK_DAYS":
+            items = [item.strip().lower() for item in text.split(",") if item.strip()]
+        elif setting.env_name == "GMAIL_LABELS":
+            items = [
+                normalized
+                for item in text.split(",")
+                if (normalized := normalize_gmail_label_id(item))
+            ]
+        else:
+            items = [item.strip() for item in text.split(",") if item.strip()]
         cleaned = ",".join(items)
         return cleaned, items
     if setting.kind == "time":

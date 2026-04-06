@@ -15,6 +15,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from .config import Config
+from .config import normalize_gmail_label_id
 from .state_store import get_state_dir, get_state_file
 
 log = logging.getLogger(__name__)
@@ -128,12 +129,17 @@ class GmailWatcher:
 
     def _list_message_ids_page(self, page_token: str | None = None, max_results: int = 25) -> dict:
         """Return one page of inbox message IDs."""
+        label_ids = [
+            normalized
+            for label in Config.gmail_labels
+            if (normalized := normalize_gmail_label_id(label))
+        ]
         return (
             self.service.users()
             .messages()
             .list(
                 userId="me",
-                labelIds=Config.gmail_labels,
+                labelIds=label_ids,
                 maxResults=max_results,
                 pageToken=page_token,
             )

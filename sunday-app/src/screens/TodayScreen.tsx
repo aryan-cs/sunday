@@ -1,6 +1,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Modal,
   Pressable,
@@ -9,8 +10,10 @@ import {
   StyleSheet,
   Switch,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
+import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { SettingsIcon } from "../components/NavIcons";
@@ -21,6 +24,8 @@ import {
   saveCalendarPreferences,
 } from "../lib/calendarPreferences";
 import { fetchApi } from "../lib/api";
+import { geocodeLocationSearch, type GeocodeSearchResponse } from "../lib/settings";
+import { LinearGradient } from "expo-linear-gradient";
 
 const BACKGROUND = "#121212";
 const CARD = "#1f1f1f";
@@ -33,6 +38,7 @@ const PANEL_BORDER = "#2b2b2b";
 const TOGGLE_OFF = "#1a1a1a";
 const TOGGLE_ON = "#5f5f5f";
 const REFRESH_INTERVAL_MS = 60_000;
+const DETAIL_SHEET_OVERDRAW = 72;
 const CALENDAR_COLOR_FALLBACKS = [
   "#ffffff",
   "#7ec8ff",
@@ -78,6 +84,11 @@ type CalendarEvent = {
 type EventsResponse = {
   events?: CalendarEvent[];
   calendars?: CalendarDescriptor[];
+};
+
+const MAP_PREVIEW_DELTA = {
+  latitudeDelta: 0.01,
+  longitudeDelta: 0.01,
 };
 
 const DEFAULT_CALENDAR_PREFERENCES: CalendarPreferences = {
@@ -283,6 +294,7 @@ function EventCard({
 
 export function TodayScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const headerTopInset = insets.top + 8;
   const [events, setEvents] = React.useState<CalendarEvent[]>([]);
   const [calendars, setCalendars] = React.useState<CalendarDescriptor[]>([]);
@@ -293,6 +305,16 @@ export function TodayScreen() {
   const [error, setError] = React.useState<string | null>(null);
   const [isCalendarSettingsVisible, setIsCalendarSettingsVisible] = React.useState(false);
   const [selectedEvent, setSelectedEvent] = React.useState<CalendarEvent | null>(null);
+  const [isEventSheetMounted, setIsEventSheetMounted] = React.useState(false);
+  const [selectedEventMapPreview, setSelectedEventMapPreview] =
+    React.useState<GeocodeSearchResponse | null>(null);
+  const [isResolvingSelectedEventMapPreview, setIsResolvingSelectedEventMapPreview] =
+    React.useState(false);
+  const eventLocationPreviewCacheRef = React.useRef<Record<string, GeocodeSearchResponse | null>>(
+    {},
+  );
+  const eventBackdropOpacity = React.useRef(new Animated.Value(0)).current;
+  const eventSheetTranslateY = React.useRef(new Animated.Value(28)).current;
 
   const loadEvents = React.useCallback(async () => {
     try {
@@ -398,6 +420,110 @@ export function TodayScreen() {
 
     const travelMode = selectedEvent.travel_mode || "driving";
     return selectedEvent.travel?.[travelMode] ?? null;
+  }, [selectedEvent]);
+  const eventSheetHiddenY = Math.max(windowHeight, 420);
+
+  const closeSelectedEvent = React.useCallback(() => {
+    if (!isEventSheetMounted) {
+      setSelectedEvent(null);
+      return;
+    }
+
+    eventBackdropOpacity.stopAnimation();
+    eventSheetTranslateY.stopAnimation();
+    Animated.parallel([
+      Animated.timing(eventBackdropOpacity, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.timing(eventSheetTranslateY, {
+          toValue: -10,
+          duration: 110,
+          useNativeDriver: true,
+        }),
+        Animated.timing(eventSheetTranslateY, {
+          toValue: eventSheetHiddenY,
+          duration: 320,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setIsEventSheetMounted(false);
+        setSelectedEvent(null);
+      }
+    });
+  }, [eventBackdropOpacity, eventSheetHiddenY, eventSheetTranslateY, isEventSheetMounted]);
+
+  React.useEffect(() => {
+    if (!selectedEvent) {
+      return;
+    }
+
+    setIsEventSheetMounted(true);
+    eventBackdropOpacity.stopAnimation();
+    eventSheetTranslateY.stopAnimation();
+    eventBackdropOpacity.setValue(0);
+    eventSheetTranslateY.setValue(eventSheetHiddenY);
+    Animated.parallel([
+      Animated.timing(eventBackdropOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.spring(eventSheetTranslateY, {
+        toValue: 0,
+        speed: 11,
+        bounciness: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [eventBackdropOpacity, eventSheetHiddenY, eventSheetTranslateY, selectedEvent]);
+
+  React.useEffect(() => {
+    const locationQuery = selectedEvent?.location?.trim();
+
+    if (!selectedEvent || selectedEvent.is_online || !locationQuery) {
+      setSelectedEventMapPreview(null);
+      setIsResolvingSelectedEventMapPreview(false);
+      return;
+    }
+
+    const cached = eventLocationPreviewCacheRef.current[locationQuery];
+    if (cached !== undefined) {
+      setSelectedEventMapPreview(cached);
+      setIsResolvingSelectedEventMapPreview(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedEventMapPreview(null);
+    setIsResolvingSelectedEventMapPreview(true);
+
+    void (async () => {
+      try {
+        const result = await geocodeLocationSearch(locationQuery);
+        eventLocationPreviewCacheRef.current[locationQuery] = result;
+        if (!cancelled) {
+          setSelectedEventMapPreview(result);
+        }
+      } catch {
+        eventLocationPreviewCacheRef.current[locationQuery] = null;
+        if (!cancelled) {
+          setSelectedEventMapPreview(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsResolvingSelectedEventMapPreview(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedEvent]);
 
   const now = new Date();
@@ -552,107 +678,157 @@ export function TodayScreen() {
         </View>
       </Modal>
 
-      <Modal
-        animationType="fade"
-        transparent
-        visible={selectedEvent != null}
-        onRequestClose={() => setSelectedEvent(null)}
-      >
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setSelectedEvent(null)} />
-          {selectedEvent ? (
-            <View
-              style={[
-                styles.eventModalSheet,
-                { paddingBottom: Math.max(insets.bottom, 18) + 8 },
-              ]}
-            >
-              <View style={styles.modalHeader}>
-                <Text numberOfLines={2} style={styles.modalTitle}>
-                  {selectedEvent.title}
-                </Text>
-                <Pressable
-                  onPress={() => setSelectedEvent(null)}
-                  style={styles.modalDoneButton}
-                >
-                  <Text style={styles.modalDoneText}>Done</Text>
-                </Pressable>
-              </View>
-
-              <Text style={styles.eventMetaText}>
-                {selectedEvent.is_all_day
-                  ? `${formatEventDateLabel(selectedEvent.start_iso)} • All day`
-                  : `${formatEventDateLabel(selectedEvent.start_iso)} • ${formatClockLabel(selectedEvent.start_iso)} - ${formatClockLabel(selectedEvent.end_iso)}`}
-              </Text>
-
-              <ScrollView
-                bounces
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.eventModalContent}
+      {isEventSheetMounted ? (
+        <Modal
+          animationType="none"
+          transparent
+          visible
+          onRequestClose={closeSelectedEvent}
+        >
+          <View style={styles.modalRoot}>
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.modalBackdrop, { opacity: eventBackdropOpacity }]}
+            />
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeSelectedEvent} />
+            {selectedEvent ? (
+              <Animated.View
+                style={[
+                  styles.eventModalSheet,
+                  {
+                    paddingBottom: Math.max(insets.bottom, 18) + 8 + DETAIL_SHEET_OVERDRAW,
+                    marginBottom: -DETAIL_SHEET_OVERDRAW,
+                    transform: [{ translateY: eventSheetTranslateY }],
+                  },
+                ]}
               >
-                {selectedEvent.location ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>Location</Text>
-                    <Text style={styles.detailSectionText}>{selectedEvent.location}</Text>
-                  </View>
-                ) : null}
-
-                {selectedEvent.description ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>Description</Text>
-                    <Text style={styles.detailSectionText}>{selectedEvent.description}</Text>
-                  </View>
-                ) : null}
-
-                {selectedEventTravel ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>Travel</Text>
-                    <Text style={styles.detailSectionText}>
-                      {selectedEventTravel.text}
-                      {selectedEvent.leave_by_iso
-                        ? ` • ${formatLeaveBy(selectedEvent.leave_by_iso)}`
-                        : ""}
+                <View style={styles.eventModalHeader}>
+                  <View style={styles.eventModalTitleWrap}>
+                    <Text numberOfLines={3} style={styles.eventModalTitle}>
+                      {selectedEvent.title}
+                    </Text>
+                    <Text style={styles.eventMetaText}>
+                      {selectedEvent.is_all_day
+                        ? `${formatEventDateLabel(selectedEvent.start_iso)} • All day`
+                        : `${formatEventDateLabel(selectedEvent.start_iso)} • ${formatClockLabel(selectedEvent.start_iso)} - ${formatClockLabel(selectedEvent.end_iso)}`}
                     </Text>
                   </View>
-                ) : null}
+                </View>
 
-                {selectedEvent.attendees.length > 0 ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>People</Text>
-                    {selectedEvent.attendees.map((attendee) => (
-                      <Text
-                        key={`${attendee.name}-${attendee.email ?? ""}`}
-                        style={styles.detailSectionText}
-                      >
-                        {attendee.name}
-                      </Text>
-                    ))}
-                  </View>
-                ) : null}
+                <View style={styles.eventModalScrollShell}>
+                  <ScrollView
+                    bounces
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.eventModalContent}
+                  >
+                    {selectedEvent.description ? (
+                      <View style={styles.detailSection}>
+                        <Text style={styles.detailSectionTitle}>Description</Text>
+                        <Text style={styles.detailSectionText}>{selectedEvent.description}</Text>
+                      </View>
+                    ) : null}
 
-                {selectedEvent.notes ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>Notes</Text>
-                    <Text style={styles.detailSectionText}>{selectedEvent.notes}</Text>
-                  </View>
-                ) : null}
+                    {selectedEvent.location ? (
+                      <View style={styles.detailSection}>
+                        <Text style={styles.detailSectionTitle}>Location</Text>
+                        <Text style={styles.detailSectionText}>{selectedEvent.location}</Text>
+                        {selectedEventMapPreview ? (
+                          <View style={styles.locationPreviewWrap}>
+                            <MapView
+                              style={styles.locationPreviewMap}
+                              pointerEvents="none"
+                              scrollEnabled={false}
+                              zoomEnabled={false}
+                              rotateEnabled={false}
+                              pitchEnabled={false}
+                              initialRegion={{
+                                latitude: selectedEventMapPreview.latitude,
+                                longitude: selectedEventMapPreview.longitude,
+                                ...MAP_PREVIEW_DELTA,
+                              }}
+                              region={{
+                                latitude: selectedEventMapPreview.latitude,
+                                longitude: selectedEventMapPreview.longitude,
+                                ...MAP_PREVIEW_DELTA,
+                              }}
+                            >
+                              <Marker
+                                coordinate={{
+                                  latitude: selectedEventMapPreview.latitude,
+                                  longitude: selectedEventMapPreview.longitude,
+                                }}
+                              />
+                            </MapView>
+                          </View>
+                        ) : isResolvingSelectedEventMapPreview ? (
+                          <View style={styles.locationPreviewLoading}>
+                            <ActivityIndicator color={ACCENT} />
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : null}
 
-                {!selectedEvent.location &&
-                !selectedEvent.description &&
-                !selectedEventTravel &&
-                selectedEvent.attendees.length === 0 &&
-                !selectedEvent.notes ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTextMuted}>
-                      No additional details for this event yet.
-                    </Text>
-                  </View>
-                ) : null}
-              </ScrollView>
-            </View>
-          ) : null}
-        </View>
-      </Modal>
+                    {selectedEventTravel ? (
+                      <View style={styles.detailSection}>
+                        <Text style={styles.detailSectionTitle}>Travel</Text>
+                        <Text style={styles.detailSectionText}>
+                          {selectedEventTravel.text}
+                          {selectedEvent.leave_by_iso
+                            ? ` • ${formatLeaveBy(selectedEvent.leave_by_iso)}`
+                            : ""}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {selectedEvent.attendees.length > 0 ? (
+                      <View style={styles.detailSection}>
+                        <Text style={styles.detailSectionTitle}>People</Text>
+                        {selectedEvent.attendees.map((attendee) => (
+                          <Text
+                            key={`${attendee.name}-${attendee.email ?? ""}`}
+                            style={styles.detailSectionText}
+                          >
+                            {attendee.name}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+
+                    {selectedEvent.notes ? (
+                      <View style={styles.detailSection}>
+                        <Text style={styles.detailSectionTitle}>Notes</Text>
+                        <Text style={styles.detailSectionText}>{selectedEvent.notes}</Text>
+                      </View>
+                    ) : null}
+
+                    {!selectedEvent.location &&
+                    !selectedEvent.description &&
+                    !selectedEventTravel &&
+                    selectedEvent.attendees.length === 0 &&
+                    !selectedEvent.notes ? (
+                      <View style={styles.detailSection}>
+                        <Text style={styles.detailSectionTextMuted}>
+                          No additional details for this event yet.
+                        </Text>
+                      </View>
+                    ) : null}
+                  </ScrollView>
+                  <LinearGradient
+                    pointerEvents="none"
+                    colors={[PANEL, "rgba(31, 31, 31, 0)"]}
+                    style={[styles.eventModalFade, styles.eventModalFadeTop]}
+                  />
+                  <LinearGradient
+                    pointerEvents="none"
+                    colors={["rgba(31, 31, 31, 0)", PANEL]}
+                    style={[styles.eventModalFade, styles.eventModalFadeBottom]}
+                  />
+                </View>
+              </Animated.View>
+            ) : null}
+          </View>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -815,6 +991,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: PANEL_BORDER,
     paddingTop: 18,
+    overflow: "hidden",
   },
   modalHeader: {
     flexDirection: "row",
@@ -850,22 +1027,49 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL,
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
-    borderWidth: 1,
-    borderColor: PANEL_BORDER,
     paddingTop: 18,
     maxHeight: "78%",
+    overflow: "hidden",
+  },
+  eventModalHeader: {
+    alignItems: "flex-start",
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+  },
+  eventModalTitleWrap: {
+    gap: 8,
+  },
+  eventModalTitle: {
+    color: ACCENT,
+    fontSize: 22,
+    fontFamily: FONTS.semibold,
   },
   eventMetaText: {
     color: MUTED,
     fontSize: 14,
     fontFamily: FONTS.regular,
-    paddingHorizontal: 18,
-    paddingBottom: 12,
+  },
+  eventModalScrollShell: {
+    position: "relative",
+    flex: 1,
   },
   eventModalContent: {
     paddingHorizontal: 18,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 20,
     gap: 14,
+  },
+  eventModalFade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 18,
+  },
+  eventModalFadeTop: {
+    top: 0,
+  },
+  eventModalFadeBottom: {
+    bottom: 0,
   },
   detailSection: {
     gap: 6,
@@ -880,6 +1084,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     fontFamily: FONTS.regular,
+  },
+  locationPreviewWrap: {
+    marginTop: 8,
+    aspectRatio: 1,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: PANEL_BORDER,
+  },
+  locationPreviewMap: {
+    flex: 1,
+  },
+  locationPreviewLoading: {
+    marginTop: 8,
+    height: 72,
+    borderRadius: 14,
+    backgroundColor: CARD_ALT,
+    alignItems: "center",
+    justifyContent: "center",
   },
   detailSectionTextMuted: {
     color: MUTED,

@@ -71,6 +71,20 @@ def test_update_app_settings_syncs_message_channel_to_imessage_flag(tmp_path, mo
     assert app_settings.Config.imessage_enabled is True
 
 
+def test_update_app_settings_preserves_gmail_label_ids_casing(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.env"
+    config_path.write_text("GMAIL_LABELS=CATEGORY_PRIMARY\n")
+
+    monkeypatch.setattr(app_settings, "CONFIG_FILE_PATH", config_path)
+
+    updated = app_settings.update_app_settings({"GMAIL_LABELS": "inbox, category_primary, Label_123"})
+
+    contents = config_path.read_text()
+    assert "GMAIL_LABELS=INBOX,CATEGORY_PRIMARY,Label_123" in contents
+    assert updated["GMAIL_LABELS"] == "INBOX,CATEGORY_PRIMARY,Label_123"
+    assert app_settings.Config.gmail_labels == ["INBOX", "CATEGORY_PRIMARY", "Label_123"]
+
+
 def test_update_app_settings_ignores_unknown_keys(tmp_path, monkeypatch):
     config_path = tmp_path / "config.env"
     config_path.write_text("TARGET_CALENDAR_ID=primary\n")

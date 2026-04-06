@@ -5,6 +5,7 @@ import DateTimePicker, {
 import { Picker } from "@react-native-picker/picker";
 import {
   ActivityIndicator,
+  AppState,
   Animated,
   LayoutAnimation,
   Modal,
@@ -206,6 +207,17 @@ type ConnectionFieldConfig = {
   secure: boolean;
 };
 
+type ValidationBucket = {
+  errors: string[];
+  warnings: string[];
+};
+
+type ValidationState = {
+  byKey: Record<string, ValidationBucket>;
+  unmatchedErrors: string[];
+  unmatchedWarnings: string[];
+};
+
 const LOCATION_SETTING_GROUPS: LocationSettingGroup[] = [
   {
     id: "home",
@@ -226,6 +238,34 @@ const LOCATION_SETTING_GROUPS: LocationSettingGroup[] = [
     placeholder: "Office address",
   },
 ];
+
+const PROVIDER_API_KEY_FIELD_KEYS: Record<string, string> = {
+  gemini: "GEMINI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  groq: "GROQ_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  together: "TOGETHER_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  huggingface: "HUGGINGFACE_API_KEY",
+  custom: "CUSTOM_LLM_API_KEY",
+};
+
+const PROVIDER_MODEL_FIELD_KEYS: Record<string, string> = {
+  gemini: "GEMINI_MODEL",
+  openrouter: "OPENROUTER_MODEL",
+  groq: "GROQ_MODEL",
+  cerebras: "CEREBRAS_MODEL",
+  ollama: "OLLAMA_MODEL",
+  together: "TOGETHER_MODEL",
+  mistral: "MISTRAL_MODEL",
+  huggingface: "HUGGINGFACE_MODEL",
+  custom: "CUSTOM_LLM_MODEL",
+};
+
+const PROVIDER_BASE_URL_FIELD_KEYS: Record<string, string> = {
+  ollama: "OLLAMA_BASE_URL",
+  custom: "CUSTOM_LLM_BASE_URL",
+};
 
 function HomeLocationIcon({ size = 22, color = "#e3e3e3" }: { size?: number; color?: string }) {
   return (
@@ -671,6 +711,129 @@ const SETTINGS_SECTIONS: SettingSection[] = [
   },
 ];
 
+const KNOWN_VALIDATION_KEYS = Array.from(
+  new Set([
+    ...SETTINGS_SECTIONS.flatMap((section) => section.fields.map((field) => field.key)),
+    "CONNECTION_AGENT",
+    "BACKEND_TARGET",
+    "VERCEL_BASE_URL",
+    "TRANSCRIPTION_MODEL_PATH",
+    "TRANSCRIPT_TITLE_MODEL_PATH",
+  ]),
+);
+
+const VALIDATION_KEY_ALIASES: Record<string, string[]> = {
+  DEFAULT_HOME_LATITUDE: ["DEFAULT_HOME_LOCATION"],
+  DEFAULT_HOME_LONGITUDE: ["DEFAULT_HOME_LOCATION"],
+  DEFAULT_WORK_LATITUDE: ["DEFAULT_WORK_LOCATION"],
+  DEFAULT_WORK_LONGITUDE: ["DEFAULT_WORK_LOCATION"],
+};
+
+function dedupeStrings(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function resolveValidationKeys(keys: string[]) {
+  return dedupeStrings(
+    keys.flatMap((key) => VALIDATION_KEY_ALIASES[key] ?? [key]),
+  );
+}
+
+function extractProviderName(message: string) {
+  const match = message.match(/provider '([^']+)'/i);
+  return match?.[1]?.trim().toLowerCase() ?? null;
+}
+
+function inferValidationTargetKeys(message: string) {
+  const upperMessage = message.toUpperCase();
+  const directMatches = resolveValidationKeys(
+    KNOWN_VALIDATION_KEYS.filter((key) => upperMessage.includes(key)),
+  );
+  if (directMatches.length > 0) {
+    return directMatches;
+  }
+
+  const providerName = extractProviderName(message);
+
+  if (upperMessage.startsWith("UNKNOWN LLM PROVIDER")) {
+    return ["ACTIVE_LLM_PROVIDER"];
+  }
+  if (upperMessage.startsWith("NO API KEY SET FOR LLM PROVIDER")) {
+    const providerKey = providerName ? PROVIDER_API_KEY_FIELD_KEYS[providerName] : null;
+    return providerKey ? [providerKey] : ["ACTIVE_LLM_PROVIDER"];
+  }
+  if (upperMessage.startsWith("NO MODEL CONFIGURED FOR LLM PROVIDER")) {
+    const providerKey = providerName ? PROVIDER_MODEL_FIELD_KEYS[providerName] : null;
+    return providerKey ? [providerKey] : ["ACTIVE_LLM_PROVIDER"];
+  }
+  if (upperMessage.startsWith("NO BASE URL CONFIGURED FOR LLM PROVIDER")) {
+    const providerKey = providerName ? PROVIDER_BASE_URL_FIELD_KEYS[providerName] : null;
+    return providerKey ? [providerKey] : ["ACTIVE_LLM_PROVIDER"];
+  }
+  if (upperMessage.startsWith("GOOGLE CREDENTIALS FILE NOT FOUND")) {
+    return ["GOOGLE_CREDENTIALS_FILE"];
+  }
+  if (upperMessage.startsWith("GOOGLE_TOKEN_JSON MUST BE CONFIGURED")) {
+    return ["BACKEND_TARGET", "GOOGLE_TOKEN_FILE"];
+  }
+  if (upperMessage.includes("IMESSAGE DELIVERY REQUIRES MACOS")) {
+    return ["MESSAGE_CHANNEL"];
+  }
+  if (upperMessage.includes("IMESSAGE DELIVERY DOES NOT WORK ON VERCEL")) {
+    return ["MESSAGE_CHANNEL", "BACKEND_TARGET"];
+  }
+  if (upperMessage.startsWith("SPEECH TRANSCRIPTION MODEL NOT FOUND")) {
+    return ["TRANSCRIPTION_MODEL_PATH"];
+  }
+  if (upperMessage.startsWith("TRANSCRIPT TITLE MODEL NOT FOUND")) {
+    return ["TRANSCRIPT_TITLE_MODEL_PATH"];
+  }
+
+  return [];
+}
+
+function buildValidationState(errors: string[], warnings: string[]): ValidationState {
+  const byKey: Record<string, ValidationBucket> = {};
+  const unmatchedErrors: string[] = [];
+  const unmatchedWarnings: string[] = [];
+
+  const pushMessage = (key: string, kind: keyof ValidationBucket, message: string) => {
+    const bucket = byKey[key] ?? { errors: [], warnings: [] };
+    if (!bucket[kind].includes(message)) {
+      bucket[kind].push(message);
+    }
+    byKey[key] = bucket;
+  };
+
+  for (const message of errors) {
+    const targetKeys = inferValidationTargetKeys(message);
+    if (targetKeys.length === 0) {
+      unmatchedErrors.push(message);
+      continue;
+    }
+    for (const key of targetKeys) {
+      pushMessage(key, "errors", message);
+    }
+  }
+
+  for (const message of warnings) {
+    const targetKeys = inferValidationTargetKeys(message);
+    if (targetKeys.length === 0) {
+      unmatchedWarnings.push(message);
+      continue;
+    }
+    for (const key of targetKeys) {
+      pushMessage(key, "warnings", message);
+    }
+  }
+
+  return {
+    byKey,
+    unmatchedErrors,
+    unmatchedWarnings,
+  };
+}
+
 function getKeyboardType(kind: FieldKind) {
   if (kind === "number") {
     return "number-pad" as const;
@@ -900,12 +1063,13 @@ export function SettingsScreen() {
   const [summarizationModel, setSummarizationModel] = React.useState("qwen2.5-0.5b-instruct");
   const [transcriptionModelOptions, setTranscriptionModelOptions] = React.useState<string[]>([]);
   const [summarizationModelOptions, setSummarizationModelOptions] = React.useState<string[]>([]);
-  const [supportedSettingKeys, setSupportedSettingKeys] = React.useState<string[]>([]);
   const [backendTarget, setBackendTarget] = React.useState("Self-hosted");
   const [vercelBaseUrl, setVercelBaseUrl] = React.useState("");
   const lastSavedSettingsRef = React.useRef("");
   const hasLoadedSettingsRef = React.useRef(false);
   const saveSequenceRef = React.useRef(0);
+  const settingsRef = React.useRef<AppSettingsValues>(settings);
+  const skipNextAutosaveRef = React.useRef(false);
   const saveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -920,6 +1084,33 @@ export function SettingsScreen() {
       UIManager.setLayoutAnimationEnabledExperimental(true);
     }
   }, []);
+
+  const animateInlineStateChange = React.useCallback(() => {
+    LayoutAnimation.configureNext({
+      duration: 180,
+      create: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+      update: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+      delete: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+    });
+  }, []);
+
+  const applyValidationState = React.useCallback(
+    (nextWarnings: string[], nextErrors: string[]) => {
+      animateInlineStateChange();
+      setWarnings(nextWarnings);
+      setErrors(nextErrors);
+    },
+    [animateInlineStateChange],
+  );
 
   const syncConnectionStateFromSettings = React.useCallback(
     async (nextSettings: AppSettingsValues) => {
@@ -952,13 +1143,12 @@ export function SettingsScreen() {
         retryTimeoutRef.current = null;
       }
       setSettings(nextSettings);
-      setSupportedSettingKeys(Object.keys(response.settings ?? {}));
+      settingsRef.current = nextSettings;
       lastSavedSettingsRef.current = serializeSettings(nextSettings);
       hasLoadedSettingsRef.current = true;
       setErrorMessage(null);
       setSettingsMetadata(response.metadata ?? {});
-      setWarnings(response.warnings);
-      setErrors(response.errors);
+      applyValidationState(response.warnings, response.errors);
       setTranscriptionModelOptions(response.modelOptions.transcription);
       setSummarizationModelOptions(response.modelOptions.summarization);
       setTranscriptionModel(
@@ -985,7 +1175,7 @@ export function SettingsScreen() {
         }, SETTINGS_RETRY_DELAY_MS);
       }
     }
-  }, [syncConnectionStateFromSettings]);
+  }, [applyValidationState, syncConnectionStateFromSettings]);
 
   React.useEffect(() => {
     void loadSettings();
@@ -1059,18 +1249,116 @@ export function SettingsScreen() {
     };
   }, []);
 
-  const handleTextChange = React.useCallback((key: string, value: string) => {
-    setSettings((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  }, []);
+  React.useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  const persistSettingsSnapshot = React.useCallback(
+    async (snapshot: AppSettingsValues, saveId: number) => {
+      setIsSaving(true);
+      setErrorMessage(null);
+      try {
+        const response = await saveAppSettings(snapshot);
+        if (saveId !== saveSequenceRef.current) {
+          return;
+        }
+
+        const nextSettings = { ...snapshot, ...response.settings };
+        settingsRef.current = nextSettings;
+        lastSavedSettingsRef.current = serializeSettings(nextSettings);
+        setSettings(nextSettings);
+        setSettingsMetadata(response.metadata ?? {});
+        applyValidationState(response.warnings, response.errors);
+        setTranscriptionModelOptions(response.modelOptions.transcription);
+        setSummarizationModelOptions(response.modelOptions.summarization);
+        setTranscriptionModel(
+          response.metadata.transcription_model_name?.trim() ||
+            response.modelOptions.transcription[0] ||
+            transcriptionModel,
+        );
+        setSummarizationModel(
+          response.metadata.summarization_model_name?.trim() ||
+            response.modelOptions.summarization[0] ||
+            summarizationModel,
+        );
+        void syncConnectionStateFromSettings(nextSettings);
+        setStatusMessage("Saved");
+        statusTimeoutRef.current = setTimeout(() => {
+          setStatusMessage((current) => (current === "Saved" ? null : current));
+        }, 1200);
+      } catch (error) {
+        if (saveId !== saveSequenceRef.current) {
+          return;
+        }
+        animateInlineStateChange();
+        setErrorMessage(error instanceof Error ? error.message : "Failed to save settings.");
+        setStatusMessage(null);
+      } finally {
+        if (saveId === saveSequenceRef.current) {
+          setIsSaving(false);
+        }
+      }
+    },
+    [
+      animateInlineStateChange,
+      applyValidationState,
+      summarizationModel,
+      syncConnectionStateFromSettings,
+      transcriptionModel,
+    ],
+  );
+
+  const saveImmediately = React.useCallback(
+    (snapshot: AppSettingsValues) => {
+      if (!hasLoadedSettingsRef.current || isLoading) {
+        return;
+      }
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (statusTimeoutRef.current) {
+        clearTimeout(statusTimeoutRef.current);
+      }
+
+      skipNextAutosaveRef.current = true;
+      const saveId = ++saveSequenceRef.current;
+      setStatusMessage("Saving…");
+      void persistSettingsSnapshot(snapshot, saveId);
+    },
+    [isLoading, persistSettingsSnapshot],
+  );
+
+  const applySettingsPatch = React.useCallback(
+    (
+      patch:
+        | Partial<AppSettingsValues>
+        | ((current: AppSettingsValues) => AppSettingsValues),
+      options?: { immediate?: boolean },
+    ) => {
+      const current = settingsRef.current;
+      const next: AppSettingsValues =
+        typeof patch === "function" ? patch(current) : ({ ...current, ...patch } as AppSettingsValues);
+      settingsRef.current = next;
+      setSettings(next);
+      if (options?.immediate) {
+        saveImmediately(next);
+      }
+      return next;
+    },
+    [saveImmediately],
+  );
+
+  const handleTextChange = React.useCallback(
+    (key: string, value: string) => {
+      applySettingsPatch({ [key]: value });
+    },
+    [applySettingsPatch],
+  );
 
   const handleCalendarIdChange = React.useCallback((value: string) => {
-    setSettings((current) => ({
-      ...current,
-      TARGET_CALENDAR_ID: value,
-    }));
+    applySettingsPatch({ TARGET_CALENDAR_ID: value });
     setSettingsMetadata((current) => {
       if (!current.target_calendar_label) {
         return current;
@@ -1079,7 +1367,7 @@ export function SettingsScreen() {
       const { target_calendar_label: _, ...rest } = current;
       return rest;
     });
-  }, []);
+  }, [applySettingsPatch]);
 
   const handleTextInputFocus = React.useCallback(
     (target: number) => {
@@ -1107,51 +1395,45 @@ export function SettingsScreen() {
         return;
       }
 
-      setSettings((current) => ({
-        ...current,
-        [key]: formatTimeForBackend(selectedDate),
-      }));
+      applySettingsPatch(
+        {
+          [key]: formatTimeForBackend(selectedDate),
+        },
+        { immediate: true },
+      );
     },
-    [],
+    [applySettingsPatch],
   );
 
-  const handleToggleChange = React.useCallback((key: string, value: boolean) => {
-    setSettings((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  }, []);
+  const handleToggleChange = React.useCallback(
+    (key: string, value: boolean) => {
+      applySettingsPatch({ [key]: value }, { immediate: true });
+    },
+    [applySettingsPatch],
+  );
 
   const handleConnectedAgentChange = React.useCallback((nextValue: string) => {
     setConnectedAgent(nextValue);
-    setSettings((current) => ({
-      ...current,
-      CONNECTION_AGENT: nextValue,
-    }));
+    applySettingsPatch({ CONNECTION_AGENT: nextValue }, { immediate: true });
     void saveConnectionPreferences({ connectedAgent: nextValue });
-  }, []);
+  }, [applySettingsPatch]);
 
   const handleBackendTargetChange = React.useCallback((nextValue: string) => {
     const normalizedTarget = nextValue === "Vercel" ? "Vercel" : "Self-hosted";
     setBackendTarget(normalizedTarget);
-    setSettings((current) => ({
-      ...current,
-      BACKEND_TARGET: normalizedTarget,
-    }));
+    applySettingsPatch({ BACKEND_TARGET: normalizedTarget }, { immediate: true });
     void saveConnectionPreferences({ backendTarget: normalizedTarget });
-  }, []);
+  }, [applySettingsPatch]);
 
   const handleVercelBaseUrlChange = React.useCallback((value: string) => {
     setVercelBaseUrl(value);
-    setSettings((current) => ({
-      ...current,
-      VERCEL_BASE_URL: value,
-    }));
-  }, []);
+    applySettingsPatch({ VERCEL_BASE_URL: value });
+  }, [applySettingsPatch]);
 
   const handleVercelBaseUrlBlur = React.useCallback(() => {
     void saveConnectionPreferences({ vercelBaseUrl });
-  }, [vercelBaseUrl]);
+    saveImmediately(settingsRef.current);
+  }, [saveImmediately, vercelBaseUrl]);
 
   const openTimezonePicker = React.useCallback(() => {
     setPendingTimezone(String(settings.TIMEZONE ?? "") || "America/Chicago");
@@ -1283,7 +1565,7 @@ export function SettingsScreen() {
   }, []);
 
   const handleWorkDayToggle = React.useCallback((day: (typeof WORKDAY_OPTIONS)[number]["value"]) => {
-    setSettings((current) => {
+    applySettingsPatch((current) => {
       const nextDays = parseWorkDays(current.WORK_DAYS);
       if (nextDays.has(day)) {
         nextDays.delete(day);
@@ -1300,24 +1582,54 @@ export function SettingsScreen() {
         ...current,
         WORK_DAYS: serialized,
       };
-    });
-  }, []);
+    }, { immediate: true });
+  }, [applySettingsPatch]);
 
   const handleLocationSelected = React.useCallback(
     (group: LocationSettingGroup, selection: SelectedLocation) => {
-      setSettings((current) => ({
-        ...current,
+      applySettingsPatch({
         [group.locationKey]: selection.label,
         [group.latitudeKey]: selection.latitude.toFixed(6),
         [group.longitudeKey]: selection.longitude.toFixed(6),
-      }));
+      }, { immediate: true });
       setActiveLocationGroupId(null);
     },
-    [],
+    [applySettingsPatch],
   );
+
+  const flushPendingSave = React.useCallback(() => {
+    if (isLoading || !hasLoadedSettingsRef.current) {
+      return;
+    }
+
+    const snapshot = settingsRef.current;
+    if (serializeSettings(snapshot) === lastSavedSettingsRef.current) {
+      return;
+    }
+
+    saveImmediately(snapshot);
+  }, [isLoading, saveImmediately]);
+
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        flushPendingSave();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      flushPendingSave();
+    };
+  }, [flushPendingSave]);
 
   React.useEffect(() => {
     if (isLoading || !hasLoadedSettingsRef.current) {
+      return;
+    }
+
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
       return;
     }
 
@@ -1338,65 +1650,14 @@ export function SettingsScreen() {
 
     saveTimeoutRef.current = setTimeout(() => {
       const snapshot = settings;
-      const payload =
-        supportedSettingKeys.length > 0
-          ? Object.fromEntries(
-              Object.entries(snapshot).filter(([key]) => supportedSettingKeys.includes(key)),
-            )
-          : snapshot;
 
-      void (async () => {
-        setIsSaving(true);
-        setErrorMessage(null);
-        try {
-          const response = await saveAppSettings(payload);
-          if (saveId !== saveSequenceRef.current) {
-            return;
-          }
-
-          const nextSettings = { ...snapshot, ...response.settings };
-          setSupportedSettingKeys(Object.keys(response.settings ?? {}));
-          lastSavedSettingsRef.current = serializeSettings(nextSettings);
-          setSettings(nextSettings);
-          setSettingsMetadata(response.metadata ?? {});
-          setWarnings(response.warnings);
-          setErrors(response.errors);
-          setTranscriptionModelOptions(response.modelOptions.transcription);
-          setSummarizationModelOptions(response.modelOptions.summarization);
-          setTranscriptionModel(
-            response.metadata.transcription_model_name?.trim() ||
-              response.modelOptions.transcription[0] ||
-              transcriptionModel,
-          );
-          setSummarizationModel(
-            response.metadata.summarization_model_name?.trim() ||
-              response.modelOptions.summarization[0] ||
-              summarizationModel,
-          );
-          void syncConnectionStateFromSettings(nextSettings);
-          setStatusMessage("Saved");
-          statusTimeoutRef.current = setTimeout(() => {
-            setStatusMessage((current) => (current === "Saved" ? null : current));
-          }, 1200);
-        } catch (error) {
-          if (saveId !== saveSequenceRef.current) {
-            return;
-          }
-          setErrorMessage(error instanceof Error ? error.message : "Failed to save settings.");
-          setStatusMessage(null);
-        } finally {
-          if (saveId === saveSequenceRef.current) {
-            setIsSaving(false);
-          }
-        }
-      })();
+      void persistSettingsSnapshot(snapshot, saveId);
     }, AUTOSAVE_DELAY_MS);
   }, [
     isLoading,
+    persistSettingsSnapshot,
     settings,
     summarizationModel,
-    supportedSettingKeys,
-    syncConnectionStateFromSettings,
     transcriptionModel,
   ]);
 
@@ -1476,6 +1737,42 @@ export function SettingsScreen() {
     connectionMeasureWidth > 0
       ? Math.min(220, Math.max(56, Math.ceil(connectionMeasureWidth + 24)))
       : undefined;
+  const validationState = React.useMemo(
+    () => buildValidationState(errors, warnings),
+    [errors, warnings],
+  );
+
+  const renderFieldValidation = React.useCallback(
+    (keys: string | string[]) => {
+      const resolvedKeys = resolveValidationKeys(Array.isArray(keys) ? keys : [keys]);
+      const fieldErrors = dedupeStrings(
+        resolvedKeys.flatMap((key) => validationState.byKey[key]?.errors ?? []),
+      );
+      const fieldWarnings = dedupeStrings(
+        resolvedKeys.flatMap((key) => validationState.byKey[key]?.warnings ?? []),
+      );
+
+      if (fieldErrors.length === 0 && fieldWarnings.length === 0) {
+        return null;
+      }
+
+      return (
+        <View style={styles.fieldValidationGroup}>
+          {fieldErrors.map((message) => (
+            <Text key={`error-${resolvedKeys.join("-")}-${message}`} style={styles.validationText}>
+              {message}
+            </Text>
+          ))}
+          {fieldWarnings.map((message) => (
+            <Text key={`warning-${resolvedKeys.join("-")}-${message}`} style={styles.warningText}>
+              {message}
+            </Text>
+          ))}
+        </View>
+      );
+    },
+    [validationState],
+  );
 
   const optionPickerConfig = React.useMemo(() => {
     if (activeOptionPicker === "agent") {
@@ -1657,282 +1954,61 @@ export function SettingsScreen() {
                             key={group.id}
                             style={[
                               styles.fieldRow,
-                              styles.fieldRowInline,
-                              styles.locationFieldRow,
                               styles.fieldRowBorder,
+                              styles.locationFieldRow,
                             ]}
                           >
-                            <View
-                              style={[
-                                styles.fieldHeader,
-                                styles.fieldHeaderInline,
-                                styles.locationFieldHeader,
-                              ]}
-                            >
-                              <View style={styles.locationIconWrap}>
-                                {group.id === "home" ? <HomeLocationIcon /> : <WorkLocationIcon />}
-                              </View>
-                            </View>
-
-                            <Pressable
-                              onPress={() => setActiveLocationGroupId(group.id)}
-                              style={styles.locationValueButton}
-                            >
-                              <Text
-                                numberOfLines={1}
+                            <View style={[styles.fieldRowMain, styles.fieldRowMainInline]}>
+                              <View
                                 style={[
-                                  styles.locationValueText,
-                                  !locationValue && styles.locationValuePlaceholder,
+                                  styles.fieldHeader,
+                                  styles.fieldHeaderInline,
+                                  styles.locationFieldHeader,
                                 ]}
                               >
-                                {locationValue || group.placeholder}
-                              </Text>
-                            </Pressable>
-                          </View>
-                        );
-                      })}
-                      <View style={[styles.fieldRow, styles.fieldRowInline]}>
-                        <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                          <Text style={styles.fieldLabel}>Use your phone location</Text>
-                        </View>
-                        <Switch
-                          value={isPhoneLocationEnabled}
-                          onValueChange={(value) => {
-                            void handlePhoneLocationToggle(value);
-                          }}
-                          ios_backgroundColor={TOGGLE_OFF}
-                          trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-                          thumbColor={isPhoneLocationEnabled ? "#ffffff" : "#d6d6d6"}
-                        />
-                      </View>
-                    </>
-                  )
-                : visibleFields.map((field, index) => {
-                    const rawValue = settings[field.key];
-                    const stringValue = typeof rawValue === "boolean" ? "" : String(rawValue ?? "");
-                    const boolValue = rawValue === true;
+                                <View style={styles.locationIconWrap}>
+                                  {group.id === "home" ? <HomeLocationIcon /> : <WorkLocationIcon />}
+                                </View>
+                              </View>
 
-                    return (
-                      <View
-                        key={field.key}
-                        style={[
-                          (field.kind === "boolean" ||
-                            field.kind === "select" ||
-                            field.key === "TARGET_CALENDAR_ID" ||
-                            isNumericPickerKey(field.key) ||
-                            isTimeSettingKey(field.key) ||
-                            field.key === "TIMEZONE") &&
-                            styles.fieldRowInline,
-                          styles.fieldRow,
-                          index !== visibleFields.length - 1 && styles.fieldRowBorder,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.fieldHeader,
-                            (field.kind === "boolean" ||
-                              field.kind === "select" ||
-                              field.key === "TARGET_CALENDAR_ID" ||
-                              isNumericPickerKey(field.key) ||
-                              isTimeSettingKey(field.key) ||
-                              field.key === "TIMEZONE") &&
-                              styles.fieldHeaderInline,
-                          ]}
-                        >
-                          <Text numberOfLines={1} style={styles.fieldLabel}>
-                            {field.label}
-                          </Text>
-                        </View>
-
-                        {field.kind === "boolean" ? (
-                          <Switch
-                            value={boolValue}
-                            onValueChange={(value) => handleToggleChange(field.key, value)}
-                            ios_backgroundColor={TOGGLE_OFF}
-                            trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-                            thumbColor={boolValue ? "#ffffff" : "#d6d6d6"}
-                          />
-                        ) : field.key === "WORK_DAYS" ? (
-                          <View style={styles.workdayRow}>
-                            {WORKDAY_OPTIONS.map((option) => {
-                              const selected = parseWorkDays(stringValue).has(option.value);
-                              return (
-                                <Pressable
-                                  key={option.value}
-                                  onPress={() => handleWorkDayToggle(option.value)}
-                                  style={[
-                                    styles.workdayButton,
-                                    selected && styles.workdayButtonSelected,
-                                  ]}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.workdayButtonText,
-                                      selected && styles.workdayButtonTextSelected,
-                                    ]}
-                                  >
-                                    {option.label}
-                                  </Text>
-                                </Pressable>
-                              );
-                            })}
-                          </View>
-                        ) : isTimeSettingKey(field.key) ? (
-                          (() => {
-                            const timeKey = field.key;
-                            return (
-                              <DateTimePicker
-                                value={getTimeSettingDate(settings[timeKey])}
-                                mode="time"
-                                display={Platform.OS === "ios" ? "compact" : "default"}
-                                themeVariant="dark"
-                                accentColor="#ffffff"
-                                onChange={(event, selectedDate) =>
-                                  handleTimeChange(timeKey, event, selectedDate)
-                                }
-                                style={styles.timePicker}
-                              />
-                            );
-                          })()
-                        ) : field.key === "TRAVEL_TYPE" ? (
-                          <TravelTypeSelector
-                            value={stringValue || "driving"}
-                            onChange={(value) => handleTextChange(field.key, value)}
-                          />
-                        ) : field.kind === "choice" ? (
-                          <View style={styles.choiceRow}>
-                            {field.options?.map((option) => {
-                              const selected = stringValue === option;
-                              return (
-                                <Pressable
-                                  key={option}
-                                  onPress={() => handleTextChange(field.key, option)}
-                                  style={[
-                                    styles.choiceChip,
-                                    selected && styles.choiceChipSelected,
-                                  ]}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.choiceChipText,
-                                      selected && styles.choiceChipTextSelected,
-                                    ]}
-                                  >
-                                    {option}
-                                  </Text>
-                                </Pressable>
-                              );
-                            })}
-                          </View>
-                        ) : field.key === "TARGET_CALENDAR_ID" ? (
-                          <Animated.View
-                            style={[styles.calendarFieldAnimatedWrap, calendarFieldAnimatedStyle]}
-                          >
-                            <Text
-                              onLayout={(event) => setCalendarDisplayWidth(event.nativeEvent.layout.width)}
-                              style={[styles.calendarMeasureText, styles.selectTriggerText]}
-                            >
-                              {targetCalendarDisplayValue}
-                            </Text>
-                            {isEditingCalendarId ? (
-                              <TextInput
-                                ref={calendarIdInputRef}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                keyboardAppearance="dark"
-                                multiline={false}
-                                numberOfLines={1}
-                                onBlur={closeCalendarIdEditor}
-                                onChangeText={handleCalendarIdChange}
-                                onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                                onSubmitEditing={closeCalendarIdEditor}
-                                placeholder={field.placeholder}
-                                placeholderTextColor="#6f6f6f"
-                                selectTextOnFocus
-                                style={[styles.input, styles.calendarIdInput]}
-                                value={stringValue}
-                              />
-                            ) : (
                               <Pressable
-                                onPress={openCalendarIdEditor}
-                                style={[styles.selectTrigger, styles.calendarSelectTrigger]}
+                                onPress={() => setActiveLocationGroupId(group.id)}
+                                style={styles.locationValueButton}
                               >
                                 <Text
                                   numberOfLines={1}
                                   style={[
-                                    styles.selectTriggerText,
-                                    styles.calendarSelectTriggerText,
+                                    styles.locationValueText,
+                                    !locationValue && styles.locationValuePlaceholder,
                                   ]}
                                 >
-                                  {targetCalendarDisplayValue}
+                                  {locationValue || group.placeholder}
                                 </Text>
                               </Pressable>
-                            )}
-                          </Animated.View>
-                        ) : field.key === "TIMEZONE" ? (
-                          <Pressable onPress={openTimezonePicker} style={styles.selectTrigger}>
-                            <Text numberOfLines={1} style={styles.selectTriggerText}>
-                              {timeZoneDisplayValue || field.placeholder || "Select"}
-                            </Text>
-                          </Pressable>
-                        ) : field.key === "MESSAGE_CHANNEL" ? (
-                          <Pressable
-                            onPress={() => openOptionPicker("MESSAGE_CHANNEL")}
-                            style={styles.selectTrigger}
-                          >
-                            <Text numberOfLines={1} style={styles.selectTriggerText}>
-                              {MESSAGE_CHANNEL_LABELS[stringValue] || stringValue || "Select"}
-                            </Text>
-                          </Pressable>
-                        ) : field.kind === "select" ? (
-                          <Pressable
-                            onPress={() => openOptionPicker(field.key as OptionSheetKind)}
-                            style={styles.selectTrigger}
-                          >
-                            <Text numberOfLines={1} style={styles.selectTriggerText}>
-                              {stringValue || field.placeholder || "Select"}
-                            </Text>
-                          </Pressable>
-                        ) : isNumericPickerKey(field.key) ? (
-                          (() => {
-                            const numericKey = field.key;
-                            return (
-                              <TextInput
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                inputMode="numeric"
-                                keyboardAppearance="dark"
-                                keyboardType="number-pad"
-                                onChangeText={(value) =>
-                                  handleTextChange(numericKey, value.replace(/[^\d]/g, ""))
-                                }
-                                onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                                placeholder="0"
-                                placeholderTextColor="#6f6f6f"
-                                selectTextOnFocus
-                                style={styles.numericInput}
-                                value={stringValue}
-                              />
-                            );
-                          })()
-                        ) : (
-                          <TextInput
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            keyboardAppearance="dark"
-                            keyboardType={getKeyboardType(field.kind)}
-                            onChangeText={(value) => handleTextChange(field.key, value)}
-                            onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                            placeholder={field.placeholder}
-                            placeholderTextColor="#6f6f6f"
-                            secureTextEntry={field.kind === "secret"}
-                            style={styles.input}
-                            value={stringValue}
+                            </View>
+                            {renderFieldValidation(group.locationKey)}
+                          </View>
+                        );
+                      })}
+                      <View style={styles.fieldRow}>
+                        <View style={[styles.fieldRowMain, styles.fieldRowMainInline]}>
+                          <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                            <Text style={styles.fieldLabel}>Use your phone location</Text>
+                          </View>
+                          <Switch
+                            value={isPhoneLocationEnabled}
+                            onValueChange={(value) => {
+                              void handlePhoneLocationToggle(value);
+                            }}
+                            ios_backgroundColor={TOGGLE_OFF}
+                            trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
+                            thumbColor={isPhoneLocationEnabled ? "#ffffff" : "#d6d6d6"}
                           />
-                        )}
+                        </View>
                       </View>
-                    );
-                  })}
+                    </>
+                  )
+                : visibleFields.map((field, index) => renderFieldRow(field, index, visibleFields.length))}
             </View>
           )}
         </View>
@@ -1943,20 +2019,12 @@ export function SettingsScreen() {
       collapsedSections,
       handleCalendarIdChange,
       handlePhoneLocationToggle,
-      handleTextChange,
-      handleTextInputFocus,
-      handleTimeChange,
-      handleToggleChange,
-      handleWorkDayToggle,
-      isEditingCalendarId,
       isPhoneLocationEnabled,
       settings.MESSAGE_CHANNEL,
-      openCalendarIdEditor,
-      openTimezonePicker,
       renderSectionHeader,
+      renderFieldRow,
+      renderFieldValidation,
       settings,
-      targetCalendarDisplayValue,
-      timeZoneDisplayValue,
     ],
   );
 
@@ -2101,8 +2169,7 @@ export function SettingsScreen() {
     }).start();
   }, [calendarEditorProgress, isEditingCalendarId]);
 
-  const renderFieldRow = React.useCallback(
-    (field: SettingField, index: number, totalFields: number) => {
+  function renderFieldRow(field: SettingField, index: number, totalFields: number) {
       const rawValue = settings[field.key];
       const stringValue = typeof rawValue === "boolean" ? "" : String(rawValue ?? "");
       const boolValue = rawValue === true;
@@ -2114,216 +2181,209 @@ export function SettingsScreen() {
         isTimeSettingKey(field.key) ||
         field.key === "TIMEZONE";
 
-      return (
+    return (
         <View
           key={field.key}
           style={[
-            isInline && styles.fieldRowInline,
             styles.fieldRow,
             index !== totalFields - 1 && styles.fieldRowBorder,
           ]}
         >
-          <View style={[styles.fieldHeader, isInline && styles.fieldHeaderInline]}>
-            <Text numberOfLines={1} style={styles.fieldLabel}>
-              {field.label}
-            </Text>
-          </View>
+          <View style={[styles.fieldRowMain, isInline && styles.fieldRowMainInline]}>
+            <View style={[styles.fieldHeader, isInline && styles.fieldHeaderInline]}>
+              <Text numberOfLines={1} style={styles.fieldLabel}>
+                {field.label}
+              </Text>
+            </View>
 
-          {field.kind === "boolean" ? (
-            <Switch
-              value={boolValue}
-              onValueChange={(value) => handleToggleChange(field.key, value)}
-              ios_backgroundColor={TOGGLE_OFF}
-              trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
-              thumbColor={boolValue ? "#ffffff" : "#d6d6d6"}
-            />
-          ) : field.key === "WORK_DAYS" ? (
-            <View style={styles.workdayRow}>
-              {WORKDAY_OPTIONS.map((option) => {
-                const selected = parseWorkDays(stringValue).has(option.value);
-                return (
-                  <Pressable
-                    key={option.value}
-                    onPress={() => handleWorkDayToggle(option.value)}
-                    style={[
-                      styles.workdayButton,
-                      selected && styles.workdayButtonSelected,
-                    ]}
-                  >
-                    <Text
+            {field.kind === "boolean" ? (
+              <Switch
+                value={boolValue}
+                onValueChange={(value) => handleToggleChange(field.key, value)}
+                ios_backgroundColor={TOGGLE_OFF}
+                trackColor={{ false: TOGGLE_OFF, true: TOGGLE_ON }}
+                thumbColor={boolValue ? "#ffffff" : "#d6d6d6"}
+              />
+            ) : field.key === "WORK_DAYS" ? (
+              <View style={styles.workdayRow}>
+                {WORKDAY_OPTIONS.map((option) => {
+                  const selected = parseWorkDays(stringValue).has(option.value);
+                  return (
+                    <Pressable
+                      key={option.value}
+                      onPress={() => handleWorkDayToggle(option.value)}
                       style={[
-                        styles.workdayButtonText,
-                        selected && styles.workdayButtonTextSelected,
+                        styles.workdayButton,
+                        selected && styles.workdayButtonSelected,
                       ]}
                     >
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : isTimeSettingKey(field.key) ? (
-            (() => {
-              const timeKey = field.key;
-              return (
-                <DateTimePicker
-                  value={getTimeSettingDate(settings[timeKey])}
-                  mode="time"
-                  display={Platform.OS === "ios" ? "compact" : "default"}
-                  themeVariant="dark"
-                  accentColor="#ffffff"
-                  onChange={(event, selectedDate) =>
-                    handleTimeChange(timeKey, event, selectedDate)
-                  }
-                  style={styles.timePicker}
-                />
-              );
-            })()
-          ) : field.key === "TRAVEL_TYPE" ? (
-            <TravelTypeSelector
-              value={stringValue || "driving"}
-              onChange={(value) => handleTextChange(field.key, value)}
-            />
-          ) : field.kind === "choice" ? (
-            <View style={styles.choiceRow}>
-              {field.options?.map((option) => {
-                const selected = stringValue === option;
+                      <Text
+                        style={[
+                          styles.workdayButtonText,
+                          selected && styles.workdayButtonTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : isTimeSettingKey(field.key) ? (
+              (() => {
+                const timeKey = field.key;
                 return (
-                  <Pressable
-                    key={option}
-                    onPress={() => handleTextChange(field.key, option)}
-                    style={[
-                      styles.choiceChip,
-                      selected && styles.choiceChipSelected,
-                    ]}
-                  >
-                    <Text
+                  <DateTimePicker
+                    value={getTimeSettingDate(settings[timeKey])}
+                    mode="time"
+                    display={Platform.OS === "ios" ? "compact" : "default"}
+                    themeVariant="dark"
+                    accentColor="#ffffff"
+                    onChange={(event, selectedDate) =>
+                      handleTimeChange(timeKey, event, selectedDate)
+                    }
+                    style={styles.timePicker}
+                  />
+                );
+              })()
+            ) : field.key === "TRAVEL_TYPE" ? (
+              <TravelTypeSelector
+                value={stringValue || "driving"}
+                onChange={(value) => handleTextChange(field.key, value)}
+              />
+            ) : field.kind === "choice" ? (
+              <View style={styles.choiceRow}>
+                {field.options?.map((option) => {
+                  const selected = stringValue === option;
+                  return (
+                    <Pressable
+                      key={option}
+                      onPress={() => handleTextChange(field.key, option)}
                       style={[
-                        styles.choiceChipText,
-                        selected && styles.choiceChipTextSelected,
+                        styles.choiceChip,
+                        selected && styles.choiceChipSelected,
                       ]}
                     >
-                      {option}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : field.key === "TARGET_CALENDAR_ID" ? (
-            <Animated.View
-              style={[styles.calendarFieldAnimatedWrap, calendarFieldAnimatedStyle]}
-            >
-              <Text
-                onLayout={(event) => setCalendarDisplayWidth(event.nativeEvent.layout.width)}
-                style={[styles.calendarMeasureText, styles.selectTriggerText]}
+                      <Text
+                        style={[
+                          styles.choiceChipText,
+                          selected && styles.choiceChipTextSelected,
+                        ]}
+                      >
+                        {option}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : field.key === "TARGET_CALENDAR_ID" ? (
+              <Animated.View
+                style={[styles.calendarFieldAnimatedWrap, calendarFieldAnimatedStyle]}
               >
-                {targetCalendarDisplayValue}
-              </Text>
-              {isEditingCalendarId ? (
-                <TextInput
-                  ref={calendarIdInputRef}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardAppearance="dark"
-                  multiline={false}
-                  numberOfLines={1}
-                  onBlur={closeCalendarIdEditor}
-                  onChangeText={handleCalendarIdChange}
-                  onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                  onSubmitEditing={closeCalendarIdEditor}
-                  placeholder={field.placeholder}
-                  placeholderTextColor="#6f6f6f"
-                  selectTextOnFocus
-                  style={[styles.input, styles.calendarIdInput]}
-                  value={stringValue}
-                />
-              ) : (
-                <Pressable
-                  onPress={openCalendarIdEditor}
-                  style={[styles.selectTrigger, styles.calendarSelectTrigger]}
+                <Text
+                  onLayout={(event) => setCalendarDisplayWidth(event.nativeEvent.layout.width)}
+                  style={[styles.calendarMeasureText, styles.selectTriggerText]}
                 >
-                  <Text
+                  {targetCalendarDisplayValue}
+                </Text>
+                {isEditingCalendarId ? (
+                  <TextInput
+                    ref={calendarIdInputRef}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardAppearance="dark"
+                    multiline={false}
                     numberOfLines={1}
-                    style={[styles.selectTriggerText, styles.calendarSelectTriggerText]}
+                    onBlur={closeCalendarIdEditor}
+                    onChangeText={handleCalendarIdChange}
+                    onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                    onSubmitEditing={closeCalendarIdEditor}
+                    placeholder={field.placeholder}
+                    placeholderTextColor="#6f6f6f"
+                    selectTextOnFocus
+                    style={[styles.input, styles.calendarIdInput]}
+                    value={stringValue}
+                  />
+                ) : (
+                  <Pressable
+                    onPress={openCalendarIdEditor}
+                    style={[styles.selectTrigger, styles.calendarSelectTrigger]}
                   >
-                    {targetCalendarDisplayValue}
-                  </Text>
-                </Pressable>
-              )}
-            </Animated.View>
-          ) : field.key === "TIMEZONE" ? (
-            <Pressable onPress={openTimezonePicker} style={styles.selectTrigger}>
-              <Text numberOfLines={1} style={styles.selectTriggerText}>
-                {timeZoneDisplayValue || field.placeholder || "Select"}
-              </Text>
-            </Pressable>
-          ) : field.kind === "select" ? (
-            <Pressable
-              onPress={() => openOptionPicker(field.key as OptionSheetKind)}
-              style={styles.selectTrigger}
-            >
-              <Text numberOfLines={1} style={styles.selectTriggerText}>
-                {stringValue || field.placeholder || "Select"}
-              </Text>
-            </Pressable>
-          ) : isNumericPickerKey(field.key) ? (
-            (() => {
-              const numericKey = field.key;
-              return (
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  inputMode="numeric"
-                  keyboardAppearance="dark"
-                  keyboardType="number-pad"
-                  onChangeText={(value) =>
-                    handleTextChange(numericKey, value.replace(/[^\d]/g, ""))
-                  }
-                  onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                  placeholder="0"
-                  placeholderTextColor="#6f6f6f"
-                  selectTextOnFocus
-                  style={styles.numericInput}
-                  value={stringValue}
-                />
-              );
-            })()
-          ) : (
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardAppearance="dark"
-              keyboardType={getKeyboardType(field.kind)}
-              onChangeText={(value) => handleTextChange(field.key, value)}
-              onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-              placeholder={field.placeholder}
-              placeholderTextColor="#6f6f6f"
-              secureTextEntry={field.kind === "secret"}
-              style={styles.input}
-              value={stringValue}
-            />
-          )}
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.selectTriggerText, styles.calendarSelectTriggerText]}
+                    >
+                      {targetCalendarDisplayValue}
+                    </Text>
+                  </Pressable>
+                )}
+              </Animated.View>
+            ) : field.key === "TIMEZONE" ? (
+              <Pressable onPress={openTimezonePicker} style={styles.selectTrigger}>
+                <Text numberOfLines={1} style={styles.selectTriggerText}>
+                  {timeZoneDisplayValue || field.placeholder || "Select"}
+                </Text>
+              </Pressable>
+            ) : field.key === "MESSAGE_CHANNEL" ? (
+              <Pressable
+                onPress={() => openOptionPicker("MESSAGE_CHANNEL")}
+                style={styles.selectTrigger}
+              >
+                <Text numberOfLines={1} style={styles.selectTriggerText}>
+                  {MESSAGE_CHANNEL_LABELS[stringValue] || stringValue || "Select"}
+                </Text>
+              </Pressable>
+            ) : field.kind === "select" ? (
+              <Pressable
+                onPress={() => openOptionPicker(field.key as OptionSheetKind)}
+                style={styles.selectTrigger}
+              >
+                <Text numberOfLines={1} style={styles.selectTriggerText}>
+                  {stringValue || field.placeholder || "Select"}
+                </Text>
+              </Pressable>
+            ) : isNumericPickerKey(field.key) ? (
+              (() => {
+                const numericKey = field.key;
+                return (
+                  <TextInput
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    inputMode="numeric"
+                    keyboardAppearance="dark"
+                    keyboardType="number-pad"
+                    onChangeText={(value) =>
+                      handleTextChange(numericKey, value.replace(/[^\d]/g, ""))
+                    }
+                    onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                    placeholder="0"
+                    placeholderTextColor="#6f6f6f"
+                    selectTextOnFocus
+                    style={styles.numericInput}
+                    value={stringValue}
+                  />
+                );
+              })()
+            ) : (
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardAppearance="dark"
+                keyboardType={getKeyboardType(field.kind)}
+                onChangeText={(value) => handleTextChange(field.key, value)}
+                onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                placeholder={field.placeholder}
+                placeholderTextColor="#6f6f6f"
+                secureTextEntry={field.kind === "secret"}
+                style={styles.input}
+                value={stringValue}
+              />
+            )}
+          </View>
+          {renderFieldValidation(field.key)}
         </View>
       );
-    },
-    [
-      calendarFieldAnimatedStyle,
-      closeCalendarIdEditor,
-      handleCalendarIdChange,
-      handleTextChange,
-      handleTextInputFocus,
-      handleTimeChange,
-      handleToggleChange,
-      handleWorkDayToggle,
-      isEditingCalendarId,
-      openCalendarIdEditor,
-      openOptionPicker,
-      openTimezonePicker,
-      settings,
-      targetCalendarDisplayValue,
-      timeZoneDisplayValue,
-    ],
-  );
+  }
 
   if (isLoading) {
     return (
@@ -2362,73 +2422,85 @@ export function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Connection</Text>
             <View style={styles.sectionPanel}>
-              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>Agent</Text>
-                </View>
-                <Pressable onPress={() => openOptionPicker("agent")} style={styles.selectTrigger}>
-                  <Text numberOfLines={1} style={styles.selectTriggerText}>{connectedAgent}</Text>
-                </Pressable>
-              </View>
-
-              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>{activeConnectionField.label}</Text>
-                </View>
-                <Text
-                  key={`${activeConnectionField.key}-${connectionDisplayText}`}
-                  onLayout={(event) => setConnectionMeasureWidth(event.nativeEvent.layout.width)}
-                  style={styles.connectionMeasureText}
-                >
-                  {connectionDisplayText}
-                </Text>
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardAppearance="dark"
-                  onChangeText={(value) => handleTextChange(activeConnectionField.key, value)}
-                  onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                  placeholder={activeConnectionField.placeholder}
-                  placeholderTextColor="#6f6f6f"
-                  secureTextEntry={activeConnectionField.secure}
-                  style={[
-                    styles.input,
-                    styles.connectionInput,
-                    connectionInputWidth ? { width: connectionInputWidth } : null,
-                  ]}
-                  value={activeConnectionValue}
-                />
-              </View>
-
-              <View style={styles.fieldRow}>
-                <View style={styles.fieldHeader}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>Backend</Text>
-                </View>
-                <TextSegmentedSelector
-                  options={BACKEND_OPTIONS}
-                  value={backendTarget}
-                  onChange={handleBackendTargetChange}
-                />
-              </View>
-
-              {backendTarget === "Vercel" ? (
-                <View style={styles.fieldRow}>
-                  <View style={styles.fieldHeader}>
-                    <Text numberOfLines={1} style={styles.fieldLabel}>Vercel URL</Text>
+              <View style={[styles.fieldRow, styles.fieldRowBorder]}>
+                <View style={[styles.fieldRowMain, styles.fieldRowMainInline]}>
+                  <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                    <Text numberOfLines={1} style={styles.fieldLabel}>Agent</Text>
                   </View>
+                  <Pressable onPress={() => openOptionPicker("agent")} style={styles.selectTrigger}>
+                    <Text numberOfLines={1} style={styles.selectTriggerText}>{connectedAgent}</Text>
+                  </Pressable>
+                </View>
+                {renderFieldValidation("CONNECTION_AGENT")}
+              </View>
+
+              <View style={[styles.fieldRow, styles.fieldRowBorder]}>
+                <View style={[styles.fieldRowMain, styles.fieldRowMainInline]}>
+                  <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                    <Text numberOfLines={1} style={styles.fieldLabel}>{activeConnectionField.label}</Text>
+                  </View>
+                  <Text
+                    key={`${activeConnectionField.key}-${connectionDisplayText}`}
+                    onLayout={(event) => setConnectionMeasureWidth(event.nativeEvent.layout.width)}
+                    style={styles.connectionMeasureText}
+                  >
+                    {connectionDisplayText}
+                  </Text>
                   <TextInput
                     autoCapitalize="none"
                     autoCorrect={false}
                     keyboardAppearance="dark"
-                    keyboardType="url"
-                    onBlur={handleVercelBaseUrlBlur}
-                    onChangeText={handleVercelBaseUrlChange}
+                    onChangeText={(value) => handleTextChange(activeConnectionField.key, value)}
                     onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
-                    placeholder="https://your-app.vercel.app"
+                    placeholder={activeConnectionField.placeholder}
                     placeholderTextColor="#6f6f6f"
-                    style={styles.input}
-                    value={vercelBaseUrl}
+                    secureTextEntry={activeConnectionField.secure}
+                    style={[
+                      styles.input,
+                      styles.connectionInput,
+                      connectionInputWidth ? { width: connectionInputWidth } : null,
+                    ]}
+                    value={activeConnectionValue}
                   />
+                </View>
+                {renderFieldValidation(activeConnectionField.key)}
+              </View>
+
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldRowMain}>
+                  <View style={styles.fieldHeader}>
+                    <Text numberOfLines={1} style={styles.fieldLabel}>Backend</Text>
+                  </View>
+                  <TextSegmentedSelector
+                    options={BACKEND_OPTIONS}
+                    value={backendTarget}
+                    onChange={handleBackendTargetChange}
+                  />
+                </View>
+                {renderFieldValidation("BACKEND_TARGET")}
+              </View>
+
+              {backendTarget === "Vercel" ? (
+                <View style={styles.fieldRow}>
+                  <View style={styles.fieldRowMain}>
+                    <View style={styles.fieldHeader}>
+                      <Text numberOfLines={1} style={styles.fieldLabel}>Vercel URL</Text>
+                    </View>
+                    <TextInput
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardAppearance="dark"
+                      keyboardType="url"
+                      onBlur={handleVercelBaseUrlBlur}
+                      onChangeText={handleVercelBaseUrlChange}
+                      onFocus={(event) => handleTextInputFocus(event.nativeEvent.target)}
+                      placeholder="https://your-app.vercel.app"
+                      placeholderTextColor="#6f6f6f"
+                      style={styles.input}
+                      value={vercelBaseUrl}
+                    />
+                  </View>
+                  {renderFieldValidation("VERCEL_BASE_URL")}
                 </View>
               ) : null}
             </View>
@@ -2437,40 +2509,46 @@ export function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Models</Text>
             <View style={styles.sectionPanel}>
-              <View style={[styles.fieldRow, styles.fieldRowInline, styles.fieldRowBorder]}>
-                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>Transcription</Text>
+              <View style={[styles.fieldRow, styles.fieldRowBorder]}>
+                <View style={[styles.fieldRowMain, styles.fieldRowMainInline]}>
+                  <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                    <Text numberOfLines={1} style={styles.fieldLabel}>Transcription</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => openOptionPicker("transcription-model")}
+                    style={styles.selectTrigger}
+                  >
+                    <Text numberOfLines={1} style={styles.selectTriggerText}>{transcriptionModel}</Text>
+                  </Pressable>
                 </View>
-                <Pressable
-                  onPress={() => openOptionPicker("transcription-model")}
-                  style={styles.selectTrigger}
-                >
-                  <Text numberOfLines={1} style={styles.selectTriggerText}>{transcriptionModel}</Text>
-                </Pressable>
+                {renderFieldValidation("TRANSCRIPTION_MODEL_PATH")}
               </View>
 
-              <View style={[styles.fieldRow, styles.fieldRowInline]}>
-                <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
-                  <Text numberOfLines={1} style={styles.fieldLabel}>Summarization</Text>
+              <View style={styles.fieldRow}>
+                <View style={[styles.fieldRowMain, styles.fieldRowMainInline]}>
+                  <View style={[styles.fieldHeader, styles.fieldHeaderInline]}>
+                    <Text numberOfLines={1} style={styles.fieldLabel}>Summarization</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => openOptionPicker("summarization-model")}
+                    style={styles.selectTrigger}
+                  >
+                    <Text numberOfLines={1} style={styles.selectTriggerText}>{summarizationModel}</Text>
+                  </Pressable>
                 </View>
-                <Pressable
-                  onPress={() => openOptionPicker("summarization-model")}
-                  style={styles.selectTrigger}
-                >
-                  <Text numberOfLines={1} style={styles.selectTriggerText}>{summarizationModel}</Text>
-                </Pressable>
+                {renderFieldValidation("TRANSCRIPT_TITLE_MODEL_PATH")}
               </View>
             </View>
           </View>
           {lowerSections.map(renderSettingsSection)}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-          {errors.map((error) => (
+          {validationState.unmatchedErrors.map((error) => (
             <Text key={`error-${error}`} style={styles.validationText}>
               {error}
             </Text>
           ))}
-          {warnings.map((warning) => (
+          {validationState.unmatchedWarnings.map((warning) => (
             <Text key={`warning-${warning}`} style={styles.warningText}>
               {warning}
             </Text>
@@ -2698,6 +2776,14 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL,
     gap: 8,
   },
+  fieldRowMain: {
+    gap: 8,
+  },
+  fieldRowMainInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   fieldRowInline: {
     flexDirection: "row",
     alignItems: "center",
@@ -2920,6 +3006,9 @@ const styles = StyleSheet.create({
   },
   choiceChipTextSelected: {
     color: BACKGROUND,
+  },
+  fieldValidationGroup: {
+    gap: 4,
   },
   errorText: {
     color: "#ff7b72",

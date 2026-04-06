@@ -12,7 +12,7 @@ import {
   UIManager,
   View,
 } from "react-native";
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
@@ -125,30 +125,36 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
   const [activeIndex, setActiveIndex] = React.useState(INITIAL_INDEX);
   const [navVisible, setNavVisible] = React.useState(true);
 
-  // Keep a ref in sync so the gesture handler (created once) can read the latest value
   React.useEffect(() => {
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
 
-  // Pan gesture that activates only for clear horizontal swipes.
-  // failOffsetY ensures vertical scrolling in inner screens is never blocked.
-  // activeOffsetX ensures taps on the record dot are never stolen.
-  const swipeGesture = React.useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX([-25, 25])
-        .failOffsetY([-10, 10])
-        .runOnJS(true)
-        .onEnd((e) => {
-          if (Math.abs(e.translationX) < 50) return;
-          const next =
-            e.translationX < 0
-              ? Math.min(activeIndexRef.current + 1, TABS.length - 1)
-              : Math.max(activeIndexRef.current - 1, 0);
-          scrollRef.current?.scrollTo({ x: next * SCREEN_WIDTH, animated: true });
-        }),
-    [],
-  );
+  // Web-only: passive window-level pointer listener for horizontal swipe navigation.
+  // Native iOS handles this automatically via the pagingEnabled horizontal ScrollView.
+  // Using passive window listeners means nothing blocks the record-dot Pressable.
+  React.useEffect(() => {
+    if (Platform.OS !== "web") return;
+    let startX = 0;
+    let startY = 0;
+    const onDown = (e: PointerEvent) => { startX = e.clientX; startY = e.clientY; };
+    const onUp = (e: PointerEvent) => {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (Math.abs(dx) > Math.abs(dy) * 1.5 && Math.abs(dx) > 60) {
+        const next =
+          dx < 0
+            ? Math.min(activeIndexRef.current + 1, TABS.length - 1)
+            : Math.max(activeIndexRef.current - 1, 0);
+        scrollRef.current?.scrollTo({ x: next * SCREEN_WIDTH, animated: true });
+      }
+    };
+    window.addEventListener("pointerdown", onDown, { passive: true });
+    window.addEventListener("pointerup", onUp, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
   const [isRecordingActive, setIsRecordingActive] = React.useState(false);
   const [alertEntries, setAlertEntries] = React.useState<AlertEntry[]>([]);
   const [entriesHydrated, setEntriesHydrated] = React.useState(false);
@@ -450,7 +456,6 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
   );
 
   return (
-    <GestureDetector gesture={swipeGesture}>
     <View style={styles.root}>
       {/* Screens */}
       <ScrollView
@@ -561,7 +566,6 @@ function Main({ seedEntries = [], isDemo = false }: { seedEntries?: AlertEntry[]
         </View>
       </Animated.View>
     </View>
-    </GestureDetector>
   );
 }
 
